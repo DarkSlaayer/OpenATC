@@ -1,3 +1,4 @@
+;V0.1 written by https://github.com/DarkSlaayer
 ; --- Begin Tool Loading Macro ---
 #<pos_x> = -280.6 ;first spot in mag x
 #<pos_y> = -729.5 ;first spot in mag y

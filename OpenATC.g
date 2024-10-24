@@ -2,10 +2,9 @@
 
 ; --- Begin Tool Loading Macro ---
 
-#<pos_x> = -280.6                 ; First spot in magazine (X)
-#<pos_y> = -729.5                 ; First spot in magazine (Y)
+#<pos_x> = -280.9                 ; First spot in magazine (X)
+#<pos_y> = -728.5                 ; First spot in magazine (Y)
 #<collet_height> = -124.5         ; Height where spindle meets collet
-#<safe_height> = -20.0            ; Safe height
 #<load_rpm> = 1600.0              ; Spindle speed for loading tool
 #<unload_rpm> = 1800.0            ; Spindle speed for unloading tool
 
@@ -23,6 +22,9 @@
 ; Temporary tool positions
 #<cur_temp_x> = 0.0
 #<sel_temp_x> = 0.0
+
+; Tool offset variable
+#<temp_tool_offset> = 0.0              ; Tool length offset
 
 o100 if [#<_selected_tool> LT 0]
     (Print, Unknown tool currently loaded)
@@ -62,6 +64,15 @@ o203 if [FIX[#<_loaded_tool>] EQ 0] ; No tool loaded
     G0 Z3                                              ; Retract to compensate overtravel
     G38.2 G91 Z[-#<retract_height> - 1] F#<slow_rate>  ; Probe slowly for precision
     G53 G0 Z#<safe_height>
+	#<temp_tool_offset> = [#5063 - #<_tool_Offset>]
+	G43.1 Z[#<temp_tool_offset>]
+	(Print, Probe offset #<temp_tool_Offset>)
+	
+		o206 if [#<_tool_Offset> EQ 0.0] ; If tool offset is 0 due to not having a probe yet
+		#<_tool_Offset> = #<temp_tool_offset>
+		(Print, First offset #<temp_tool_offset>))
+	o206 endif
+
 o203 else
     o204 if [FIX[#<_selected_tool>] EQ 0] ; Unloading current tool to original spot
         M5                              ; 1. Ensure the spindle is off
@@ -74,6 +85,22 @@ o203 else
         #<_loaded_tool> = [#<_selected_tool>]
         (Print, Tool unloaded)
     o204 else
+	
+	o205 if [#<_tool_Offset> EQ 0.0] ; If tool offset is 0 due to not having a probe yet
+	    G53 G0 Z#<safe_height>
+        G53 G0 X#<probe_x> Y#<probe_y> F#<travel_feedrate> ; Move to probe point location
+        G38.2 G91 Z[-#<probe_dist>] F#<fast_rate> P0       ; Fast probe towards workpiece
+        G0 Z3                                              ; Retract to compensate overtravel
+        G38.2 G91 Z[-#<retract_height> - 1] F#<slow_rate>  ; Probe slowly for precision
+        G53 G0 Z#<safe_height>
+		#<temp_tool_offset> = [#5063 - #<_tool_Offset>]
+		(Print, First offset #<temp_tool_offset>))
+		G43.1 Z[#<temp_tool_offset>]
+		#<_tool_Offset> = #<temp_tool_offset>
+		(Print, First offset #<temp_tool_offset>))
+	o205 endif
+	
+	
         ; Unload current tool and load the new one
         M5                              ; 1. Ensure the spindle is off
         G53 Z[#<safe_height>] F1000     ; 2. Move to safe height
@@ -103,7 +130,9 @@ o203 else
         G0 Z3                                              ; Retract to compensate overtravel
         G38.2 G91 Z[-#<retract_height> - 1] F#<slow_rate>  ; Probe slowly for precision
         G53 G0 Z#<safe_height>
-        (Print, Tool loaded)
+		#<temp_tool_offset> = [#5063 - #<_tool_Offset>]
+		G43.1 Z[#<temp_tool_offset>]
+        (Print, Tool loaded with offset stored #<temp_tool_Offset>)
     o204 endif
 
 o203 endif

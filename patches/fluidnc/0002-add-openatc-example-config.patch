@@ -1,0 +1,67 @@
+From 20aa58e52a65caac1cdee2921eb937faa138eca2 Mon Sep 17 00:00:00 2001
+From: OpenATC Maintainers <https://github.com/DarkSlaayer>
+Date: Tue, 16 Jun 2026 01:01:57 -0700
+Subject: [PATCH 2/3] Add OpenATC example config
+
+---
+ example_configs/openatc_linear.yaml | 49 +++++++++++++++++++++++++++++
+ 1 file changed, 49 insertions(+)
+ create mode 100644 example_configs/openatc_linear.yaml
+
+diff --git a/example_configs/openatc_linear.yaml b/example_configs/openatc_linear.yaml
+new file mode 100644
+index 0000000..734ca58
+--- /dev/null
++++ b/example_configs/openatc_linear.yaml
+@@ -0,0 +1,49 @@
++# Example OpenATC config for a linear bed-mounted magazine.
++# Replace all machine coordinates with values measured on your machine before
++# enabling automatic tool changes.
++
++openatc:
++  layout: linear
++  magazine_axis: x
++  pocket_count: 8
++  first_pocket_mpos_mm: -280.000 -728.000
++  pocket_pitch_mm: 38.000
++
++  safe_z_mpos_mm: -20.000
++  engage_z_mpos_mm: -124.500
++  travel_feed_mm_per_min: 1500
++  engage_feed_mm_per_min: 1200
++  retract_feed_mm_per_min: 1500
++
++  load:
++    spindle_direction: cw
++    spindle_rpm: 1600
++    spin_ms: 1000
++    passes: 2
++    retract_between_passes_mm: 50
++
++  unload:
++    spindle_direction: ccw
++    spindle_rpm: 1800
++    spin_ms: 1000
++
++  toolsetter_mpos_mm: -24.000 -784.000 -130.000
++  toolsetter_rapid_z_mpos_mm: -40.000
++  probe_seek_rate_mm_per_min: 200
++  probe_feed_rate_mm_per_min: 25
++  probe_retract_mm: 3
++
++  # Optional spindle tool detection. Configure pin polarity so logical true
++  # means a tool blocks the beam while held in the spindle. After load this
++  # should be true; after unload this should be false. Use NO_PIN until motion
++  # is proven.
++  tool_in_spindle_pin: NO_PIN
++
++H100:
++  uart_num: 1
++  modbus_id: 1
++  tool_num: 0
++  speed_map: 0=0% 1200=5% 6000=25% 24000=100%
++  spinup_ms: 0
++  spindown_ms: 0
++  atc: openatc
+-- 
+2.54.0

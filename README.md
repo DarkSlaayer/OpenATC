@@ -11,7 +11,13 @@
 </p>
 
 <p align="center">
-  <img src="assets/openatc-logo.png" alt="OpenATC logo" width="520">
+  <img src="https://raw.githubusercontent.com/DarkSlaayer/OpenATC/main/assets/openatc-logo.png" alt="OpenATC logo" width="520">
+</p>
+
+<p align="center">
+  <a href="https://darkslaayer.github.io/OpenATC/">
+    <img src="https://img.shields.io/badge/Open%20Config%20Wizard-2563eb?style=for-the-badge" alt="Open Config Wizard">
+  </a>
 </p>
 
 # OpenATC

@@ -1,0 +1,36 @@
+FluidNC base commit: 4aa40185c861fe4abad17a592673c827e0298697
+Base commit summary: Use full git commit hash for usb libraries
+
+Patch order:
+1. 0001-add-openatc-native-toolchanger.patch
+2. 0002-add-openatc-example-config.patch
+3. 0003-add-openatc-tests-and-fixtures.patch
+4. 0004-Allow-signed-OpenATC-pocket-pitch.patch
+
+Last verified: 2026-06-16
+
+Verification commands:
+git checkout 4aa40185c861fe4abad17a592673c827e0298697
+git am \
+  /path/to/OpenATC/patches/fluidnc/0001-add-openatc-native-toolchanger.patch \
+  /path/to/OpenATC/patches/fluidnc/0002-add-openatc-example-config.patch \
+  /path/to/OpenATC/patches/fluidnc/0003-add-openatc-tests-and-fixtures.patch \
+  /path/to/OpenATC/patches/fluidnc/0004-Allow-signed-OpenATC-pocket-pitch.patch
+git diff --check HEAD~4..HEAD
+pio test -e tests
+pio run -e wifi
+
+Expected verification result in a working PlatformIO environment:
+- Patch series applies cleanly.
+- Patch whitespace check has no output.
+- Unit tests pass.
+- The wifi firmware environment builds successfully.
+
+Local verification note for 2026-06-16:
+- Patch series applied cleanly to a fresh checkout at the pinned commit.
+- Patch whitespace check passed.
+- Focused C++ syntax checks and an OpenATC sequencer harness passed.
+- `pio test -e tests` passed with 334/334 tests.
+- `pio run -e wifi` passed after prepending a temporary `python` shim to
+  `PATH`, because FluidNC's build invokes `python git-version.py` and this
+  machine only has `python3`.

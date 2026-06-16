@@ -1,0 +1,538 @@
+From 359536ad33b3aeb90678aba93bd54d8dd8ac8ea5 Mon Sep 17 00:00:00 2001
+From: OpenATC Maintainers <https://github.com/DarkSlaayer>
+Date: Tue, 16 Jun 2026 01:02:33 -0700
+Subject: [PATCH 3/3] Add OpenATC tests and fixtures
+
+---
+ FluidNC/tests/test_unit/OpenATCModelTest.cpp | 480 +++++++++++++++++++
+ fixture_tests/fixtures/openatc_basic.nc      |  15 +
+ fixture_tests/fixtures/openatc_recovery.nc   |   9 +
+ 3 files changed, 504 insertions(+)
+ create mode 100644 FluidNC/tests/test_unit/OpenATCModelTest.cpp
+ create mode 100644 fixture_tests/fixtures/openatc_basic.nc
+ create mode 100644 fixture_tests/fixtures/openatc_recovery.nc
+
+diff --git a/FluidNC/tests/test_unit/OpenATCModelTest.cpp b/FluidNC/tests/test_unit/OpenATCModelTest.cpp
+new file mode 100644
+index 0000000..1be9b23
+--- /dev/null
++++ b/FluidNC/tests/test_unit/OpenATCModelTest.cpp
+@@ -0,0 +1,480 @@
++#include "gtest/gtest.h"
++
++#include "ToolChangers/atc_openatc_job.h"
++#include "ToolChangers/atc_openatc_model.h"
++
++#include <cstdarg>
++#include <cstdio>
++#include <string>
++#include <vector>
++
++using namespace ATCs;
++
++namespace {
++struct RecordingMacro {
++    std::vector<std::string> lines;
++
++    void addf(const char* format, ...) {
++        char    buffer[160];
++        va_list args;
++        va_start(args, format);
++        std::vsnprintf(buffer, sizeof(buffer), format, args);
++        va_end(args);
++        lines.emplace_back(buffer);
++    }
++};
++
++OpenATCActionConfig action() {
++    OpenATCActionConfig cfg;
++    cfg.spindle_rpm = 1600;
++    cfg.spin_ms     = 1000;
++    cfg.passes      = 1;
++    return cfg;
++}
++
++OpenATCConfigView valid_config(std::vector<float>&      first_pocket,
++                               std::vector<float>&      toolsetter,
++                               OpenATCActionConfig& load,
++                               OpenATCActionConfig& unload) {
++    return {
++        "linear",
++        "x",
++        4,
++        &first_pocket,
++        38.0f,
++        -20.0f,
++        -124.5f,
++        4000.0f,
++        1200.0f,
++        1000.0f,
++        &load,
++        &unload,
++        &toolsetter,
++        -40.0f,
++        500.0f,
++        25.0f,
++        3.0f,
++    };
++}
++
++OpenATCBounds bounds() {
++    OpenATCBounds b;
++    b.valid[X_AXIS] = true;
++    b.valid[Y_AXIS] = true;
++    b.valid[Z_AXIS] = true;
++    b.min[X_AXIS]   = -400.0f;
++    b.max[X_AXIS]   = 10.0f;
++    b.min[Y_AXIS]   = -900.0f;
++    b.max[Y_AXIS]   = 10.0f;
++    b.min[Z_AXIS]   = -150.0f;
++    b.max[Z_AXIS]   = 0.0f;
++    return b;
++}
++
++std::vector<std::string> emit_change_lines(OpenATCConfigView const& cfg,
++                                           tool_t                   current_tool,
++                                           tool_t                   requested_tool,
++                                           bool                     have_reference_probe) {
++    RecordingMacro    macro;
++    OpenATCChangePlan plan = openatc_build_change_plan(current_tool, requested_tool, have_reference_probe);
++    openatc_emit_change_plan(macro, cfg, X_AXIS, plan, current_tool, requested_tool);
++    return macro.lines;
++}
++
++size_t find_line(std::vector<std::string> const& lines, std::string const& needle, size_t start = 0) {
++    for (size_t index = start; index < lines.size(); ++index) {
++        if (lines[index] == needle) {
++            return index;
++        }
++    }
++    return lines.size();
++}
++}  // namespace
++
++TEST(OpenATCModel, ParsesOnlyXAndYMagazineAxes) {
++    axis_t axis = INVALID_AXIS;
++    EXPECT_TRUE(openatc_parse_magazine_axis("x", axis));
++    EXPECT_EQ(axis, X_AXIS);
++    EXPECT_TRUE(openatc_parse_magazine_axis("Y", axis));
++    EXPECT_EQ(axis, Y_AXIS);
++    EXPECT_FALSE(openatc_parse_magazine_axis("z", axis));
++    EXPECT_FALSE(openatc_parse_magazine_axis("theta", axis));
++}
++
++TEST(OpenATCModel, ParsesOnlyKnownSpindleDirections) {
++    OpenATCSpindleDirection direction = OpenATCSpindleDirection::CW;
++    EXPECT_TRUE(openatc_parse_spindle_direction("cw", direction));
++    EXPECT_EQ(direction, OpenATCSpindleDirection::CW);
++    EXPECT_TRUE(openatc_parse_spindle_direction("CCW", direction));
++    EXPECT_EQ(direction, OpenATCSpindleDirection::CCW);
++    EXPECT_FALSE(openatc_parse_spindle_direction("reverse", direction));
++}
++
++TEST(OpenATCModel, MapsToolNumbersToPocketIndexes) {
++    EXPECT_TRUE(openatc_tool_is_pocket(1, 8));
++    EXPECT_TRUE(openatc_tool_is_pocket(8, 8));
++    EXPECT_FALSE(openatc_tool_is_pocket(0, 8));
++    EXPECT_FALSE(openatc_tool_is_pocket(9, 8));
++    EXPECT_EQ(openatc_pocket_index(1), 0u);
++    EXPECT_EQ(openatc_pocket_index(4), 3u);
++}
++
++TEST(OpenATCModel, ComputesXPocketPositions) {
++    std::vector<float> first { -280.0f, -728.0f };
++    OpenATCXY          pocket1 = openatc_pocket_position(X_AXIS, first, 38.0f, 1);
++    OpenATCXY          pocket3 = openatc_pocket_position(X_AXIS, first, 38.0f, 3);
++    EXPECT_FLOAT_EQ(pocket1.x, -280.0f);
++    EXPECT_FLOAT_EQ(pocket1.y, -728.0f);
++    EXPECT_FLOAT_EQ(pocket3.x, -204.0f);
++    EXPECT_FLOAT_EQ(pocket3.y, -728.0f);
++}
++
++TEST(OpenATCModel, ComputesYPocketPositions) {
++    std::vector<float> first { -280.0f, -728.0f };
++    OpenATCXY          pocket1 = openatc_pocket_position(Y_AXIS, first, 38.0f, 1);
++    OpenATCXY          pocket3 = openatc_pocket_position(Y_AXIS, first, 38.0f, 3);
++    EXPECT_FLOAT_EQ(pocket1.x, -280.0f);
++    EXPECT_FLOAT_EQ(pocket1.y, -728.0f);
++    EXPECT_FLOAT_EQ(pocket3.x, -280.0f);
++    EXPECT_FLOAT_EQ(pocket3.y, -652.0f);
++}
++
++TEST(OpenATCModel, ValidatesConfigShape) {
++    std::vector<float>   first { -280.0f, -728.0f };
++    std::vector<float>   toolsetter { -24.0f, -784.0f, -130.0f };
++    OpenATCActionConfig  load   = action();
++    OpenATCActionConfig  unload = action();
++    OpenATCConfigView    cfg    = valid_config(first, toolsetter, load, unload);
++
++    EXPECT_TRUE(openatc_validate_config(cfg).ok);
++
++    cfg.layout = "grid";
++    EXPECT_FALSE(openatc_validate_config(cfg).ok);
++    cfg.layout = "linear";
++
++    cfg.magazine_axis_name = "z";
++    EXPECT_FALSE(openatc_validate_config(cfg).ok);
++    cfg.magazine_axis_name = "x";
++
++    cfg.pocket_count = 0;
++    EXPECT_FALSE(openatc_validate_config(cfg).ok);
++    cfg.pocket_count = 4;
++
++    cfg.first_pocket_mpos_mm = nullptr;
++    EXPECT_FALSE(openatc_validate_config(cfg).ok);
++}
++
++TEST(OpenATCModel, ValidatesActionShape) {
++    OpenATCActionConfig cfg = action();
++    EXPECT_TRUE(openatc_validate_action(&cfg, "missing").ok);
++
++    cfg.spindle_rpm = 0;
++    EXPECT_FALSE(openatc_validate_action(&cfg, "missing").ok);
++    cfg = action();
++
++    cfg.spin_ms = 0;
++    EXPECT_FALSE(openatc_validate_action(&cfg, "missing").ok);
++    cfg = action();
++
++    cfg.passes = 0;
++    EXPECT_FALSE(openatc_validate_action(&cfg, "missing").ok);
++    cfg = action();
++
++    cfg.retract_between_passes_mm = -1.0f;
++    EXPECT_FALSE(openatc_validate_action(&cfg, "missing").ok);
++}
++
++TEST(OpenATCModel, ValidatesBounds) {
++    std::vector<float>   first { -280.0f, -728.0f };
++    std::vector<float>   toolsetter { -24.0f, -784.0f, -130.0f };
++    OpenATCActionConfig  load   = action();
++    OpenATCActionConfig  unload = action();
++    OpenATCConfigView    cfg    = valid_config(first, toolsetter, load, unload);
++
++    EXPECT_TRUE(openatc_validate_bounds(cfg, bounds()).ok);
++
++    OpenATCBounds tight = bounds();
++    tight.max[X_AXIS]   = -260.0f;
++    EXPECT_FALSE(openatc_validate_bounds(cfg, tight).ok);
++
++    tight             = bounds();
++    tight.min[Z_AXIS] = -120.0f;
++    EXPECT_FALSE(openatc_validate_bounds(cfg, tight).ok);
++}
++
++TEST(OpenATCModel, PlansFirstLoadAsReferenceTool) {
++    OpenATCChangePlan plan = openatc_build_change_plan(0, 2, false);
++
++    ASSERT_EQ(plan.count, 2u);
++    EXPECT_EQ(plan.steps[0], OpenATCPlanStep::LoadRequested);
++    EXPECT_EQ(plan.steps[1], OpenATCPlanStep::ProbeReference);
++    EXPECT_TRUE(plan.reference_after);
++}
++
++TEST(OpenATCModel, PlansSwapWithExistingReferenceAsUnloadLoadAndTloProbe) {
++    OpenATCChangePlan plan = openatc_build_change_plan(1, 3, true);
++
++    ASSERT_EQ(plan.count, 3u);
++    EXPECT_EQ(plan.steps[0], OpenATCPlanStep::UnloadCurrent);
++    EXPECT_EQ(plan.steps[1], OpenATCPlanStep::LoadRequested);
++    EXPECT_EQ(plan.steps[2], OpenATCPlanStep::ProbeRequestedAndApplyTlo);
++    EXPECT_TRUE(plan.reference_after);
++}
++
++TEST(OpenATCModel, PlansDeclaredCurrentToolWithoutReferenceByProbingBeforeUnload) {
++    OpenATCChangePlan plan = openatc_build_change_plan(1, 3, false);
++
++    ASSERT_EQ(plan.count, 4u);
++    EXPECT_EQ(plan.steps[0], OpenATCPlanStep::ProbeReference);
++    EXPECT_EQ(plan.steps[1], OpenATCPlanStep::UnloadCurrent);
++    EXPECT_EQ(plan.steps[2], OpenATCPlanStep::LoadRequested);
++    EXPECT_EQ(plan.steps[3], OpenATCPlanStep::ProbeRequestedAndApplyTlo);
++    EXPECT_TRUE(plan.reference_after);
++}
++
++TEST(OpenATCModel, PlansUnloadAsUnloadAndClearTlo) {
++    OpenATCChangePlan plan = openatc_build_change_plan(4, 0, true);
++
++    ASSERT_EQ(plan.count, 2u);
++    EXPECT_EQ(plan.steps[0], OpenATCPlanStep::UnloadCurrent);
++    EXPECT_EQ(plan.steps[1], OpenATCPlanStep::ClearTlo);
++    EXPECT_FALSE(plan.reference_after);
++}
++
++TEST(OpenATCModel, PlansSameToolAsNoOp) {
++    OpenATCChangePlan plan = openatc_build_change_plan(3, 3, true);
++
++    EXPECT_EQ(plan.count, 0u);
++    EXPECT_TRUE(plan.reference_after);
++}
++
++TEST(OpenATCModel, SameToolPlanDoesNotRequireMacro) {
++    OpenATCChangePlan plan = openatc_build_change_plan(0, 0, false);
++
++    EXPECT_FALSE(openatc_plan_requires_macro(plan));
++}
++
++TEST(OpenATCModel, EmitsFirstLoadReferenceGCode) {
++    std::vector<float>  first { -280.0f, -728.0f };
++    std::vector<float>  toolsetter { -24.0f, -784.0f, -130.0f };
++    OpenATCActionConfig load = action();
++    load.passes             = 2;
++    load.retract_between_passes_mm = 50.0f;
++    OpenATCActionConfig unload     = action();
++    OpenATCConfigView   cfg        = valid_config(first, toolsetter, load, unload);
++
++    std::vector<std::string> lines = emit_change_lines(cfg, 0, 2, false);
++
++    EXPECT_EQ(lines, (std::vector<std::string> {
++                         "M5",
++                         "G53G0Z-20.000",
++                         "G53G1X-242.000Y-728.000F4000.000",
++                         "M3S1600",
++                         "G53G1Z-124.500F1200.000",
++                         "G4P1.000",
++                         "M5",
++                         "G53G1Z-74.500F1000.000",
++                         "M3S1600",
++                         "G53G1Z-124.500F1200.000",
++                         "G4P1.000",
++                         "M5",
++                         "G53G0Z-20.000",
++                         "G53G0Z-20.000",
++                         "G53G1X-24.000Y-784.000F4000.000",
++                         "G53G0Z-40.000",
++                         "G53G38.2Z-130.000F500.000",
++                         "G53G0Z[#<_abs_z>+3.000]",
++                         "G53G38.2Z-130.000F25.000",
++                         "#<_openatc_reference_z>=[#5063]",
++                         "G43.1Z0",
++                         "G53G0Z-20.000",
++                     }));
++}
++
++TEST(OpenATCModel, EmitsDeclaredToolSwapReferenceBeforeUnload) {
++    std::vector<float>  first { -280.0f, -728.0f };
++    std::vector<float>  toolsetter { -24.0f, -784.0f, -130.0f };
++    OpenATCActionConfig load   = action();
++    OpenATCActionConfig unload = action();
++    unload.direction           = OpenATCSpindleDirection::CCW;
++    unload.spindle_rpm         = 1800;
++    OpenATCConfigView cfg      = valid_config(first, toolsetter, load, unload);
++
++    std::vector<std::string> lines = emit_change_lines(cfg, 1, 3, false);
++
++    size_t reference_capture = find_line(lines, "#<_openatc_reference_z>=[#5063]");
++    size_t first_unload      = find_line(lines, "M4S1800");
++    size_t unload_pocket     = find_line(lines, "G53G1X-280.000Y-728.000F4000.000");
++    size_t load_pocket       = find_line(lines, "G53G1X-204.000Y-728.000F4000.000", unload_pocket + 1);
++    size_t tlo_capture       = find_line(lines, "#<_openatc_tlo_z>=[#5063-#<_openatc_reference_z>]");
++    size_t apply_tlo         = find_line(lines, "G43.1Z#<_openatc_tlo_z>");
++
++    ASSERT_NE(reference_capture, lines.size());
++    ASSERT_NE(first_unload, lines.size());
++    ASSERT_NE(unload_pocket, lines.size());
++    ASSERT_NE(load_pocket, lines.size());
++    ASSERT_NE(tlo_capture, lines.size());
++    ASSERT_NE(apply_tlo, lines.size());
++    EXPECT_LT(reference_capture, first_unload);
++    EXPECT_LT(unload_pocket, load_pocket);
++    EXPECT_LT(load_pocket, tlo_capture);
++    EXPECT_LT(tlo_capture, apply_tlo);
++}
++
++TEST(OpenATCModel, EmitsUnloadAndClearTlo) {
++    std::vector<float>  first { -280.0f, -728.0f };
++    std::vector<float>  toolsetter { -24.0f, -784.0f, -130.0f };
++    OpenATCActionConfig load   = action();
++    OpenATCActionConfig unload = action();
++    unload.direction           = OpenATCSpindleDirection::CCW;
++    unload.spindle_rpm         = 1800;
++    unload.passes              = 3;
++    unload.retract_between_passes_mm = 50.0f;
++    OpenATCConfigView cfg      = valid_config(first, toolsetter, load, unload);
++
++    std::vector<std::string> lines = emit_change_lines(cfg, 4, 0, true);
++
++    EXPECT_EQ(lines, (std::vector<std::string> {
++                         "M5",
++                         "G53G0Z-20.000",
++                         "G53G1X-166.000Y-728.000F4000.000",
++                         "M4S1800",
++                         "G53G1Z-124.500F1200.000",
++                         "G4P1.000",
++                         "M5",
++                         "G53G0Z-20.000",
++                         "G49",
++                         "(MSG: OpenATC TLO cleared)",
++                     }));
++}
++
++TEST(OpenATCModel, EmitsFailedUnloadRetryUsingLoadRetract) {
++    std::vector<float>  first { -280.0f, -728.0f };
++    std::vector<float>  toolsetter { -24.0f, -784.0f, -130.0f };
++    OpenATCActionConfig load = action();
++    load.retract_between_passes_mm = 50.0f;
++    OpenATCActionConfig unload = action();
++    unload.direction           = OpenATCSpindleDirection::CCW;
++    unload.spindle_rpm         = 1800;
++    OpenATCConfigView cfg      = valid_config(first, toolsetter, load, unload);
++    RecordingMacro    macro;
++
++    openatc_add_failed_unload_retry(macro, cfg);
++
++    EXPECT_EQ(macro.lines, (std::vector<std::string> {
++                               "G53G1Z-74.500F1000.000",
++                               "M4S1800",
++                               "G53G1Z-124.500F1200.000",
++                               "G4P1.000",
++                               "M5",
++                               "G53G0Z-20.000",
++                           }));
++}
++
++TEST(OpenATCModel, FailedUnloadRetryUsesLoadRetractThenOneUnloadPassThenSafeZ) {
++    std::vector<float> first { -280.0f, -728.0f };
++    std::vector<float> toolsetter { -24.0f, -784.0f, -130.0f };
++    OpenATCActionConfig load = action();
++    load.retract_between_passes_mm = 50.0f;
++    OpenATCActionConfig unload = action();
++    unload.direction   = OpenATCSpindleDirection::CCW;
++    unload.spindle_rpm = 1800;
++    OpenATCConfigView cfg = valid_config(first, toolsetter, load, unload);
++    RecordingMacro macro;
++
++    openatc_add_failed_unload_retry(macro, cfg);
++
++    EXPECT_EQ(macro.lines, (std::vector<std::string> {
++                               "G53G1Z-74.500F1000.000",
++                               "M4S1800",
++                               "G53G1Z-124.500F1200.000",
++                               "G4P1.000",
++                               "M5",
++                               "G53G0Z-20.000",
++                           }));
++}
++
++TEST(OpenATCSensorModel, UnloadPassesWhenToolBeamIsClear) {
++    OpenATCSensorSnapshot sensors;
++    sensors.tool_in_spindle_defined = true;
++    sensors.tool_in_spindle         = false;
++
++    EXPECT_EQ(openatc_decide_after_unload(sensors, true), OpenATCSensorDecision::Pass);
++}
++
++TEST(OpenATCSensorModel, FailedUnloadRetriesOnceThenFails) {
++    OpenATCSensorSnapshot sensors;
++    sensors.tool_in_spindle_defined = true;
++    sensors.tool_in_spindle         = true;
++
++    EXPECT_EQ(openatc_decide_after_unload(sensors, true), OpenATCSensorDecision::RetryUnload);
++    EXPECT_EQ(openatc_decide_after_unload(sensors, false), OpenATCSensorDecision::Fail);
++}
++
++TEST(OpenATCSensorModel, LoadPassesWhenToolBeamIsBlocked) {
++    OpenATCSensorSnapshot sensors;
++    sensors.tool_in_spindle_defined = true;
++    sensors.tool_in_spindle         = true;
++
++    EXPECT_TRUE(openatc_decide_after_load(sensors));
++}
++
++TEST(OpenATCSensorModel, LoadFailsWhenToolSensorDoesNotSeeLoadedTool) {
++    OpenATCSensorSnapshot sensors;
++    sensors.tool_in_spindle_defined = true;
++    sensors.tool_in_spindle         = false;
++
++    EXPECT_FALSE(openatc_decide_after_load(sensors));
++}
++
++TEST(OpenATCJobChannel, UpdatesFinishedToolOnlyAfterEof) {
++    std::vector<float> first { -280.0f, -728.0f };
++    std::vector<float> toolsetter { -24.0f, -784.0f, -130.0f };
++    OpenATCActionConfig load = action();
++    OpenATCActionConfig unload = action();
++    OpenATCConfigView cfg = valid_config(first, toolsetter, load, unload);
++    OpenATCChangePlan plan = openatc_build_change_plan(1, 2, true);
++
++    OpenATCJobTestResult result = openatc_run_job_channel_for_test(cfg, plan, X_AXIS, 1, 2, false, {});
++
++    EXPECT_TRUE(result.finished);
++    EXPECT_EQ(result.finished_tool, 2);
++    EXPECT_FALSE(result.failed);
++}
++
++TEST(OpenATCJobChannel, RestoresInchModeOnSuccess) {
++    std::vector<float> first { -280.0f, -728.0f };
++    std::vector<float> toolsetter { -24.0f, -784.0f, -130.0f };
++    OpenATCActionConfig load = action();
++    OpenATCActionConfig unload = action();
++    OpenATCConfigView cfg = valid_config(first, toolsetter, load, unload);
++    OpenATCChangePlan plan = openatc_build_change_plan(0, 1, true);
++
++    OpenATCJobTestResult result = openatc_run_job_channel_for_test(cfg, plan, X_AXIS, 0, 1, true, {});
++
++    ASSERT_FALSE(result.emitted_lines.empty());
++    EXPECT_EQ(result.emitted_lines.front(), "G21");
++    EXPECT_EQ(result.emitted_lines.back(), "G20");
++    EXPECT_TRUE(result.finished);
++}
++
++TEST(OpenATCJobChannel, RestoresInchModeBeforeSensorFailure) {
++    std::vector<float> first { -280.0f, -728.0f };
++    std::vector<float> toolsetter { -24.0f, -784.0f, -130.0f };
++    OpenATCActionConfig load = action();
++    OpenATCActionConfig unload = action();
++    OpenATCConfigView cfg = valid_config(first, toolsetter, load, unload);
++    OpenATCChangePlan plan = openatc_build_change_plan(0, 1, true);
++    OpenATCSensorSnapshot failed_load;
++    failed_load.tool_in_spindle_defined = true;
++    failed_load.tool_in_spindle = false;
++
++    OpenATCJobTestResult result = openatc_run_job_channel_for_test(cfg, plan, X_AXIS, 0, 1, true, { failed_load });
++
++    ASSERT_FALSE(result.emitted_lines.empty());
++    EXPECT_EQ(result.emitted_lines.front(), "G21");
++    EXPECT_EQ(result.emitted_lines.back(), "G20");
++    EXPECT_FALSE(result.finished);
++    EXPECT_TRUE(result.failed);
++    EXPECT_EQ(result.failure_count, 1u);
++}
+diff --git a/fixture_tests/fixtures/openatc_basic.nc b/fixture_tests/fixtures/openatc_basic.nc
+new file mode 100644
+index 0000000..d4b3ae2
+--- /dev/null
++++ b/fixture_tests/fixtures/openatc_basic.nc
+@@ -0,0 +1,15 @@
++# OpenATC basic hardware smoke fixture.
++# Requires a configured controller with openatc attached to the active spindle.
++-> $X
++<~ [MSG:INFO: Caution: Unlocked]
++<- ok
++-> M61 Q0
++<- ok
++-> $G
++<~ T0
++<- ok
++-> M61 Q1
++<- ok
++-> $G
++<~ T1
++<- ok
+diff --git a/fixture_tests/fixtures/openatc_recovery.nc b/fixture_tests/fixtures/openatc_recovery.nc
+new file mode 100644
+index 0000000..8162c43
+--- /dev/null
++++ b/fixture_tests/fixtures/openatc_recovery.nc
+@@ -0,0 +1,9 @@
++# OpenATC recovery and invalid-tool smoke fixture.
++# Set pocket_count lower than 99 in the machine config before running.
++-> $X
++<~ [MSG:INFO: Caution: Unlocked]
++<- ok
++-> M61 Q0
++<- ok
++-> T99 M6
++<~ [MSG:ERR:
+-- 
+2.54.0

@@ -1,0 +1,1733 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenATC Config Wizard</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --panel: #ffffff;
+      --panel-soft: #f8fafc;
+      --line: #d7dee8;
+      --line-strong: #9aa8ba;
+      --text: #172033;
+      --muted: #627089;
+      --blue: #2563eb;
+      --blue-soft: #e8f1ff;
+      --green: #159947;
+      --green-soft: #e9f9ef;
+      --orange: #d97706;
+      --orange-soft: #fff7ed;
+      --red: #dc2626;
+      --dark: #101827;
+      --radius: 8px;
+      --shadow: 0 20px 60px rgba(15, 23, 42, 0.10);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.45;
+    }
+
+    button, input, select, textarea {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+      border-radius: 7px;
+      padding: 10px 14px;
+      background: var(--blue);
+      color: #ffffff;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: #e2e8f0;
+      color: #243042;
+    }
+
+    button.ghost {
+      background: transparent;
+      color: var(--blue);
+      border: 1px solid #bfdbfe;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: 3px solid rgba(37, 99, 235, 0.25);
+      outline-offset: 2px;
+    }
+
+    .page {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .topbar {
+      background: rgba(255, 255, 255, 0.92);
+      border-bottom: 1px solid var(--line);
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      backdrop-filter: blur(12px);
+    }
+
+    .topbar-inner {
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 12px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .brand img {
+      width: 76px;
+      height: 76px;
+      object-fit: contain;
+      flex: 0 0 auto;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+
+    .brand p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      max-width: 720px;
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .shell {
+      width: min(1380px, calc(100% - 32px));
+      margin: 22px auto;
+      display: grid;
+      grid-template-columns: 230px minmax(0, 1fr) 390px;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .steps, .panel, .preview {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .steps {
+      padding: 12px;
+      position: sticky;
+      top: 116px;
+    }
+
+    .step-tab {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border-radius: 7px;
+      background: transparent;
+      color: #334155;
+      text-align: left;
+      font-weight: 700;
+    }
+
+    .step-tab.active {
+      background: var(--blue-soft);
+      color: #1e3a8a;
+    }
+
+    .step-number {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      background: #e2e8f0;
+      color: #334155;
+      flex: 0 0 auto;
+      font-size: 13px;
+    }
+
+    .step-tab.active .step-number {
+      background: var(--blue);
+      color: #ffffff;
+    }
+
+    .panel {
+      overflow: hidden;
+    }
+
+    .panel-head {
+      padding: 22px 24px 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-head .kicker {
+      margin: 0 0 6px;
+      color: var(--blue);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 800;
+    }
+
+    .panel-head h2 {
+      margin: 0;
+      font-size: 28px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .panel-head p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      max-width: 860px;
+    }
+
+    .panel-body {
+      padding: 18px 24px 24px;
+    }
+
+    .grid-two {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .grid-three {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field label, .choice-title {
+      font-weight: 800;
+      color: #253044;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    code {
+      font: 0.92em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #eef2f7;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+
+    .unit-input {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      border-radius: 7px;
+      padding: 8px 10px;
+      min-width: 0;
+    }
+
+    .unit-input input, .unit-input select {
+      width: 100%;
+      min-width: 0;
+      border: 0;
+      outline: 0;
+      color: var(--text);
+      background: transparent;
+      font-weight: 650;
+    }
+
+    .unit-input span {
+      color: var(--muted);
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .choices {
+      display: grid;
+      gap: 10px;
+    }
+
+    .choice-row {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    .choice {
+      border: 1px solid var(--line);
+      background: #ffffff;
+      border-radius: 7px;
+      padding: 12px;
+      cursor: pointer;
+      display: grid;
+      gap: 4px;
+      min-height: 88px;
+    }
+
+    .choice.selected {
+      border-color: #93c5fd;
+      background: var(--blue-soft);
+      box-shadow: inset 0 0 0 1px #93c5fd;
+    }
+
+    .diagram-card {
+      margin-bottom: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel-soft);
+      padding: 14px;
+      overflow: hidden;
+    }
+
+    .diagram-card svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .note {
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #1e3a8a;
+      border-radius: 7px;
+      padding: 12px;
+      margin-top: 14px;
+    }
+
+    .warning {
+      border-color: #fed7aa;
+      background: var(--orange-soft);
+      color: #92400e;
+    }
+
+    .validation-panel {
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 12px;
+      background: #ffffff;
+      display: grid;
+      gap: 8px;
+    }
+
+    .validation-status {
+      display: inline-flex;
+      align-items: center;
+      width: fit-content;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-weight: 850;
+      font-size: 13px;
+    }
+
+    .validation-status.ready {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .validation-status.warn {
+      background: #fef3c7;
+      color: #92400e;
+    }
+
+    .validation-status.blocked {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .validation-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .validation-list li {
+      margin: 4px 0;
+    }
+
+    .preview {
+      position: sticky;
+      top: 116px;
+      overflow: hidden;
+    }
+
+    .preview-head {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .preview-head h2 {
+      margin: 0;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+
+    .preview-body {
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+    }
+
+    textarea.code {
+      width: 100%;
+      min-height: 360px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 12px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      white-space: pre;
+      overflow: auto;
+    }
+
+    textarea.plain {
+      width: 100%;
+      min-height: 170px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 12px;
+      background: #ffffff;
+      color: var(--text);
+      font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .panel-actions {
+      padding: 14px 24px 22px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .output-tabs {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      overflow: hidden;
+    }
+
+    .output-tabs button {
+      border-radius: 0;
+      background: #ffffff;
+      color: #334155;
+      border-right: 1px solid var(--line);
+    }
+
+    .output-tabs button:last-child {
+      border-right: 0;
+    }
+
+    .output-tabs button.active {
+      background: var(--dark);
+      color: #ffffff;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .small-list {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+    }
+
+    .small-list li {
+      margin: 5px 0;
+    }
+
+    .substeps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin: 0 0 14px;
+    }
+
+    .substep {
+      border: 1px solid var(--line);
+      background: #ffffff;
+      border-radius: 7px;
+      padding: 10px;
+    }
+
+    .substep strong {
+      display: block;
+      margin-bottom: 4px;
+      color: #253044;
+    }
+
+    .substep.active {
+      border-color: #93c5fd;
+      background: var(--blue-soft);
+    }
+
+    .substep.done {
+      border-color: #86efac;
+      background: #ecfdf5;
+    }
+
+    .check-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    .check-item {
+      border: 1px solid var(--line);
+      background: #ffffff;
+      border-radius: 7px;
+      padding: 11px;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .check-dot {
+      width: 24px;
+      height: 24px;
+      border-radius: 7px;
+      display: grid;
+      place-items: center;
+      background: #ecfdf5;
+      color: #166534;
+      font-weight: 900;
+      flex: 0 0 auto;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .status-card {
+      border: 1px solid var(--line);
+      background: #ffffff;
+      border-radius: 7px;
+      padding: 11px;
+    }
+
+    .status-card strong {
+      display: block;
+      margin-bottom: 4px;
+      color: #253044;
+    }
+
+    @media (max-width: 1180px) {
+      .shell {
+        grid-template-columns: 210px 1fr;
+      }
+      .preview {
+        grid-column: 1 / -1;
+        position: static;
+      }
+    }
+
+    @media (max-width: 820px) {
+      .topbar-inner {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .top-actions {
+        justify-content: flex-start;
+      }
+      .shell {
+        grid-template-columns: 1fr;
+        width: min(100% - 20px, 1380px);
+      }
+      .steps {
+        position: static;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .grid-two, .grid-three, .choice-row, .substeps, .check-grid, .status-grid {
+        grid-template-columns: 1fr;
+      }
+      .brand img {
+        width: 64px;
+        height: 64px;
+      }
+      .panel-head h2 {
+        font-size: 23px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand">
+          <img src="assets/openatc-logo.png" alt="OpenATC">
+          <div>
+            <h1>OpenATC Config Wizard</h1>
+            <p>Generate the FluidNC `openatc:` section for a linear bed-mounted X/Y magazine. All values are machine coordinates in millimeters.</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <button class="ghost" id="jumpOutput" type="button">View output</button>
+          <button id="copyTop" type="button">Copy config</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="shell">
+      <nav class="steps" id="steps" aria-label="Wizard steps"></nav>
+
+      <section class="panel">
+        <div class="panel-head">
+          <p class="kicker" id="stepKicker"></p>
+          <h2 id="stepTitle"></h2>
+          <p id="stepIntro"></p>
+        </div>
+        <div class="panel-body" id="stepBody"></div>
+        <div class="panel-actions">
+          <button class="secondary" id="backBtn" type="button">Back</button>
+          <div>
+            <button class="secondary" id="resetBtn" type="button">Reset examples</button>
+            <button id="nextBtn" type="button">Next</button>
+          </div>
+        </div>
+      </section>
+
+      <aside class="preview" aria-label="Generated configuration">
+        <div class="preview-head">
+          <h2>Generated YAML</h2>
+          <div class="output-tabs">
+            <button id="tabSection" class="active" type="button">Section</button>
+            <button id="tabMerged" type="button">Merged</button>
+          </div>
+        </div>
+        <div class="preview-body">
+          <div id="validationPanel"></div>
+          <textarea class="code" id="configOutput" spellcheck="false" readonly></textarea>
+          <div class="grid-two">
+            <button id="copyPreview" type="button">Copy</button>
+            <button class="secondary" id="downloadBtn" type="button">Download</button>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    const defaultState = {
+      magazineAxis: "x",
+      magazineSide: "front",
+      pocketCount: 6,
+      firstPocketX: "",
+      firstPocketY: "",
+      pocketPitch: "",
+      pocketDirection: "positive",
+      safeZ: "",
+      engageZ: "",
+      travelFeed: 1500,
+      engageFeed: 1200,
+      retractFeed: 1500,
+      toolsetterX: "",
+      toolsetterY: "",
+      toolsetterZ: "",
+      toolsetterRapidZ: "",
+      probeSeek: 200,
+      probeFeed: 25,
+      probeRetract: 3,
+      loadDirection: "cw",
+      loadRpm: 1600,
+      loadSpinMs: 1000,
+      loadPasses: 2,
+      loadRetract: 50,
+      unloadDirection: "ccw",
+      unloadRpm: 1800,
+      unloadSpinMs: 1000,
+      toolInSpindlePin: "NO_PIN",
+      spindleSection: "H100",
+      existingConfig: "",
+      outputMode: "section"
+    };
+
+    let state = { ...defaultState };
+    let currentStep = 0;
+
+    const stepMeta = [
+      ["Safety", "Check assumptions before entering numbers", "OpenATC moves the spindle into fixed hardware and intentionally starts spindle rotation. Verify values slowly on the machine before enabling a complete tool change."],
+      ["Magazine", "Where is your linear magazine mounted?", "Pick the row axis first, then the side of the bed. The side helps you think about the physical layout; the firmware only needs measured machine coordinates."],
+      ["Z heights", "What vertical positions are safe and engaged?", "Safe Z clears the lowest point before XY travel. Engage Z seats the collet nut in the pocket socket."],
+      ["Toolsetter", "Where is the fixed toolsetter?", "Set the machine-coordinate toolsetter target, probe start Z, probe limit Z, feed rates, and retract distance."],
+      ["Load / unload", "How should the spindle tighten and loosen tools?", "The spindle should already be rotating before final pocket entry. Load normally tightens; unload normally loosens."],
+      ["Sensors", "Do you have spindle tool detection?", "Use one optional beam-style input to verify whether a tool is held by the spindle. Configure FluidNC polarity so logical true means the beam is blocked by a tool."],
+      ["Output", "Copy or merge the generated config", "Copy only the `openatc:` section, or paste/upload an existing FluidNC config and let the wizard add the section plus `atc: openatc`."]
+    ];
+
+    function hasNumber(value) {
+      if (value === "" || value === null || typeof value === "undefined") return false;
+      return Number.isFinite(Number(value));
+    }
+
+    function num(value, decimals = 3) {
+      return hasNumber(value) ? Number(value).toFixed(decimals) : "required";
+    }
+
+    function int(value) {
+      return hasNumber(value) ? String(Math.round(Number(value))) : "required";
+    }
+
+    function openAtcYaml() {
+      return [
+        "openatc:",
+        "  layout: linear",
+        `  magazine_axis: ${state.magazineAxis}`,
+        `  pocket_count: ${int(state.pocketCount)}`,
+        `  first_pocket_mpos_mm: ${num(state.firstPocketX)} ${num(state.firstPocketY)}`,
+        `  pocket_pitch_mm: ${num(signedPocketPitch())}`,
+        "",
+        `  safe_z_mpos_mm: ${num(state.safeZ)}`,
+        `  engage_z_mpos_mm: ${num(state.engageZ)}`,
+        `  travel_feed_mm_per_min: ${int(state.travelFeed)}`,
+        `  engage_feed_mm_per_min: ${int(state.engageFeed)}`,
+        `  retract_feed_mm_per_min: ${int(state.retractFeed)}`,
+        "",
+        "  load:",
+        `    spindle_direction: ${state.loadDirection}`,
+        `    spindle_rpm: ${int(state.loadRpm)}`,
+        `    spin_ms: ${int(state.loadSpinMs)}`,
+        `    passes: ${int(state.loadPasses)}`,
+        `    retract_between_passes_mm: ${num(state.loadRetract)}`,
+        "",
+        "  unload:",
+        `    spindle_direction: ${state.unloadDirection}`,
+        `    spindle_rpm: ${int(state.unloadRpm)}`,
+        `    spin_ms: ${int(state.unloadSpinMs)}`,
+        "",
+        `  toolsetter_mpos_mm: ${num(state.toolsetterX)} ${num(state.toolsetterY)} ${num(state.toolsetterZ)}`,
+        `  toolsetter_rapid_z_mpos_mm: ${num(state.toolsetterRapidZ)}`,
+        `  probe_seek_rate_mm_per_min: ${int(state.probeSeek)}`,
+        `  probe_feed_rate_mm_per_min: ${int(state.probeFeed)}`,
+        `  probe_retract_mm: ${num(state.probeRetract)}`,
+        "",
+        `  tool_in_spindle_pin: ${pinValue(state.toolInSpindlePin)}`,
+      ].join("\n");
+    }
+
+    function pinValue(value) {
+      const trimmed = String(value || "").trim();
+      return trimmed || "NO_PIN";
+    }
+
+    function stripTopLevelBlock(text, key) {
+      const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+      const out = [];
+      for (let i = 0; i < lines.length; i += 1) {
+        if (lines[i].match(new RegExp(`^${key}:\\s*(#.*)?$`))) {
+          i += 1;
+          while (i < lines.length && (lines[i].trim() === "" || /^\s+/.test(lines[i]))) {
+            i += 1;
+          }
+          i -= 1;
+        } else {
+          out.push(lines[i]);
+        }
+      }
+      return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+    }
+
+    function withSpindleAtc(text) {
+      const section = String(state.spindleSection || "H100").trim() || "H100";
+      const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const lines = String(text || "").replace(/\r\n/g, "\n").split("\n");
+      const headerIndex = lines.findIndex((line) => line.match(new RegExp(`^${escaped}:\\s*(#.*)?$`)));
+      if (headerIndex === -1) {
+        const suffix = [`${section}:`, "  atc: openatc"].join("\n");
+        return `${String(text || "").trim()}\n\n${suffix}`.trim();
+      }
+
+      let end = lines.length;
+      for (let i = headerIndex + 1; i < lines.length; i += 1) {
+        if (/^\S[^:]*:\s*(#.*)?$/.test(lines[i])) {
+          end = i;
+          break;
+        }
+      }
+
+      let atcIndex = -1;
+      for (let i = headerIndex + 1; i < end; i += 1) {
+        if (/^\s+atc:\s*/.test(lines[i])) {
+          atcIndex = i;
+          break;
+        }
+      }
+
+      if (atcIndex >= 0) {
+        lines[atcIndex] = "  atc: openatc";
+      } else {
+        lines.splice(headerIndex + 1, 0, "  atc: openatc");
+      }
+      return lines.join("\n").trim();
+    }
+
+    function mergedConfig() {
+      const base = stripTopLevelBlock(state.existingConfig, "openatc");
+      const merged = `${openAtcYaml()}\n\n${base}`.trim();
+      return withSpindleAtc(merged);
+    }
+
+    function outputText() {
+      return state.outputMode === "merged" ? mergedConfig() : openAtcYaml();
+    }
+
+    function signedPocketPitch() {
+      if (!hasNumber(state.pocketPitch)) return NaN;
+      const distance = Math.abs(Number(state.pocketPitch));
+      return state.pocketDirection === "negative" ? -distance : distance;
+    }
+
+    function pocketDirectionLabel() {
+      return `${state.magazineAxis.toUpperCase()}${state.pocketDirection === "negative" ? "-" : "+"}`;
+    }
+
+    function setField(key, value) {
+      state[key] = value;
+      if (key === "magazineAxis") {
+        if (value === "x" && !["front", "back"].includes(state.magazineSide)) state.magazineSide = "front";
+        if (value === "y" && !["left", "right"].includes(state.magazineSide)) state.magazineSide = "left";
+      }
+      render();
+    }
+
+    function numericValue(key) {
+      if (!hasNumber(state[key])) return NaN;
+      return Number(state[key]);
+    }
+
+    function addPositiveRule(errors, key, label) {
+      const value = numericValue(key);
+      if (!Number.isFinite(value) || value <= 0) {
+        errors.push(`${label} must be greater than 0.`);
+      }
+    }
+
+    function pinLooksValid(value) {
+      const trimmed = String(value || "").trim();
+      if (trimmed === "" || trimmed.toUpperCase() === "NO_PIN") return true;
+      return !/\s/.test(trimmed) && /^[!~^:]?[A-Za-z0-9_.:/+\-]+$/.test(trimmed);
+    }
+
+    function hasTopLevelSection(text, section) {
+      const escaped = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`^${escaped}:\\s*(#.*)?$`, "m").test(String(text || ""));
+    }
+
+    function validateConfig() {
+      const errors = [];
+      const warnings = [];
+
+      const pocketCount = numericValue("pocketCount");
+      if (!Number.isInteger(pocketCount) || pocketCount < 1) {
+        errors.push("Pocket count must be a whole number of at least 1.");
+      } else if (pocketCount > 100) {
+        errors.push("Pocket count must be 100 or less.");
+      }
+
+      const pitchDistance = Math.abs(numericValue("pocketPitch"));
+      if (!Number.isFinite(pitchDistance) || pitchDistance === 0) {
+        errors.push("Pocket spacing must be a non-zero distance.");
+      }
+      if (numericValue("pocketPitch") < 0) {
+        warnings.push("Pocket spacing is treated as a distance. Use the X-/Y- numbering choice to control the sign.");
+      }
+
+      [
+        ["firstPocketX", "Pocket 1 X"],
+        ["firstPocketY", "Pocket 1 Y"],
+        ["toolsetterX", "Toolsetter X"],
+        ["toolsetterY", "Toolsetter Y"],
+        ["toolsetterZ", "Toolsetter Z limit"],
+        ["toolsetterRapidZ", "Probe start Z"]
+      ].forEach(([key, label]) => {
+        if (!Number.isFinite(numericValue(key))) {
+          errors.push(`${label} must be entered from your measured machine coordinates.`);
+        }
+      });
+
+      const safeZ = numericValue("safeZ");
+      const engageZ = numericValue("engageZ");
+      if (!Number.isFinite(safeZ) || !Number.isFinite(engageZ)) {
+        errors.push("Safe travel Z and Engage Z must be entered from your measured machine coordinates.");
+      } else if (safeZ <= engageZ) {
+        errors.push("Safe travel Z should be above Engage Z. On normal FluidNC Z coordinates, safe Z is numerically greater.");
+      }
+
+      ["travelFeed", "engageFeed", "retractFeed", "probeSeek", "probeFeed", "probeRetract", "loadRpm", "loadSpinMs", "unloadRpm", "unloadSpinMs"].forEach((key) => {
+        const labels = {
+          travelFeed: "Travel feed",
+          engageFeed: "Engage feed",
+          retractFeed: "Retract feed",
+          probeSeek: "Probe seek rate",
+          probeFeed: "Probe feed rate",
+          probeRetract: "Probe retract",
+          loadRpm: "Load RPM",
+          loadSpinMs: "Load spin time",
+          unloadRpm: "Unload RPM",
+          unloadSpinMs: "Unload spin time"
+        };
+        addPositiveRule(errors, key, labels[key]);
+      });
+
+      const loadPasses = numericValue("loadPasses");
+      if (!Number.isInteger(loadPasses) || loadPasses < 1) {
+        errors.push("Load passes must be a whole number of at least 1.");
+      } else if (loadPasses > 20) {
+        errors.push("Load passes must be 20 or less.");
+      }
+
+      const loadRetract = numericValue("loadRetract");
+      if (!Number.isFinite(loadRetract) || loadRetract < 0) {
+        errors.push("Retract between passes must be 0 or greater.");
+      } else if (loadRetract === 0) {
+        warnings.push("Retract between passes should lift high enough that the collet is not engaging the pocket.");
+      } else if (loadRetract < 5) {
+        warnings.push("Retract between passes is very small. Confirm it clears the pocket before repeated load passes.");
+      }
+
+      ["toolInSpindlePin"].forEach((key) => {
+        if (!pinLooksValid(state[key])) {
+          errors.push(`${key} must be NO_PIN or a FluidNC pin string without spaces.`);
+        }
+      });
+
+      const spindle = String(state.spindleSection || "").trim();
+      if (state.outputMode === "merged" && !spindle) {
+        errors.push("Spindle config section is required for merged output.");
+      } else if (spindle && !/^[A-Za-z0-9_.-]+$/.test(spindle)) {
+        warnings.push("Spindle config section contains unusual characters. Confirm it exactly matches your FluidNC spindle section.");
+      }
+
+      if (state.outputMode === "merged") {
+        if (!String(state.existingConfig || "").trim()) {
+          warnings.push("Merged mode has no existing config pasted. The output will contain only OpenATC and a spindle stub.");
+        } else if (spindle && !hasTopLevelSection(state.existingConfig, spindle)) {
+          warnings.push(`Merged mode will create a new ${spindle}: section because it was not found in the pasted config.`);
+        }
+      }
+
+      return { errors, warnings };
+    }
+
+    function validationSummary() {
+      const validation = validateConfig();
+      const blocked = validation.errors.length > 0;
+      const warned = !blocked && validation.warnings.length > 0;
+      const status = blocked ? "blocked" : warned ? "warn" : "ready";
+      const label = blocked ? "Needs attention" : warned ? "Ready with warnings" : "Ready";
+      const messages = blocked ? validation.errors : validation.warnings;
+      const body = messages.length
+        ? `<ul class="validation-list">${messages.map((message) => `<li>${escapeHtml(message)}</li>`).join("")}</ul>`
+        : `<div class="hint">No blocking issues found. Verify all positions on the real machine before running a full tool change.</div>`;
+      return `
+        <div class="validation-panel">
+          <span class="validation-status ${status}">${label}</span>
+          ${body}
+        </div>
+      `;
+    }
+
+    const fieldPlaceholders = {
+      firstPocketX: "measure X",
+      firstPocketY: "measure Y",
+      pocketPitch: "measure spacing",
+      safeZ: "measure safe Z",
+      engageZ: "measure engage Z",
+      toolsetterX: "measure X",
+      toolsetterY: "measure Y",
+      toolsetterZ: "measure Z limit",
+      toolsetterRapidZ: "measure start Z"
+    };
+
+    function field(label, key, unit, hint, type = "number") {
+      const value = state[key] ?? "";
+      const placeholder = fieldPlaceholders[key] || "";
+      return `
+        <div class="field">
+          <label for="${key}">${label}</label>
+          <div class="unit-input">
+            <input id="${key}" type="${type}" value="${escapeHtml(value)}" data-field="${key}" ${type === "number" ? "step=\"0.001\"" : ""} ${placeholder ? `placeholder="${escapeHtml(placeholder)}"` : ""}>
+            <span>${unit}</span>
+          </div>
+          ${hint ? `<div class="hint">${hint}</div>` : ""}
+        </div>
+      `;
+    }
+
+    function selectField(label, key, values, hint) {
+      const options = values.map((value) => `<option value="${value}" ${state[key] === value ? "selected" : ""}>${value}</option>`).join("");
+      return `
+        <div class="field">
+          <label for="${key}">${label}</label>
+          <div class="unit-input">
+            <select id="${key}" data-field="${key}">${options}</select>
+          </div>
+          ${hint ? `<div class="hint">${hint}</div>` : ""}
+        </div>
+      `;
+    }
+
+    function choice(label, value, key, hint) {
+      const selected = state[key] === value ? "selected" : "";
+      return `
+        <button class="choice ${selected}" type="button" data-choice-key="${key}" data-choice-value="${value}">
+          <span class="choice-title">${label}</span>
+          <span class="hint">${hint}</span>
+        </button>
+      `;
+    }
+
+    function magazineDiagram() {
+      const axis = state.magazineAxis;
+      const side = state.magazineSide;
+      const showX = axis === "x";
+      const positions = {
+        front: { x: 150, y: 292, w: 260, h: 28, opacity: side === "front" ? 1 : 0.28 },
+        back: { x: 150, y: 39, w: 260, h: 28, opacity: side === "back" ? 1 : 0.28 },
+        left: { x: 62, y: 102, w: 28, h: 170, opacity: side === "left" ? 1 : 0.28 },
+        right: { x: 470, y: 102, w: 28, h: 170, opacity: side === "right" ? 1 : 0.28 }
+      };
+      const mag = (name) => {
+        const p = positions[name];
+        const vertical = p.h > p.w;
+        const dots = Array.from({ length: 6 }).map((_, i) => {
+          const cx = vertical ? p.x + p.w / 2 : p.x + 28 + i * 40;
+          const cy = vertical ? p.y + 22 + i * 25 : p.y + p.h / 2;
+          const colors = ["#f59e0b", "#38bdf8", "#e2e8f0", "#a78bfa", "#22c55e", "#ef4444"];
+          return `<circle cx="${cx}" cy="${cy}" r="7" fill="${colors[i]}"/>`;
+        }).join("");
+        return `<g opacity="${p.opacity}"><rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="7" fill="#111827"/>${dots}</g>`;
+      };
+      return `
+        <svg viewBox="0 0 560 360" role="img" aria-label="Top-down CNC bed with selectable magazine side">
+          <rect x="96" y="70" width="368" height="224" rx="10" fill="#e5e7eb" stroke="#334155" stroke-width="3"/>
+          <rect x="126" y="102" width="308" height="156" rx="5" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+          ${[132, 168, 204, 240].map((y) => `<line x1="146" y1="${y}" x2="414" y2="${y}" stroke="#cbd5e1" stroke-width="2"/>`).join("")}
+          ${[178, 232, 286, 340].map((x) => `<line x1="${x}" y1="116" x2="${x}" y2="246" stroke="#e2e8f0" stroke-width="2"/>`).join("")}
+          <text x="280" y="32" text-anchor="middle" fill="#475569" font-size="16" font-weight="800">Back side</text>
+          <text x="280" y="346" text-anchor="middle" fill="#475569" font-size="16" font-weight="800">Front side</text>
+          <text x="42" y="184" text-anchor="middle" fill="#475569" font-size="16" font-weight="800" transform="rotate(-90 42 184)">Left side</text>
+          <text x="520" y="184" text-anchor="middle" fill="#475569" font-size="16" font-weight="800" transform="rotate(90 520 184)">Right side</text>
+          ${mag("front")}${mag("back")}${mag("left")}${mag("right")}
+          <circle cx="280" cy="184" r="34" fill="#334155"/>
+          <circle cx="280" cy="184" r="21" fill="#111827"/>
+          <circle cx="280" cy="184" r="7" fill="#e2e8f0"/>
+          <rect x="315" y="171" width="76" height="26" rx="5" fill="#ffffff" opacity="0.95"/>
+          <text x="353" y="189" text-anchor="middle" fill="#334155" font-size="14" font-weight="800">Spindle</text>
+          <line x1="110" y1="334" x2="210" y2="334" stroke="#2563eb" stroke-width="4" marker-end="url(#arrowBlue)"/>
+          <text x="210" y="340" text-anchor="end" fill="#1d4ed8" font-size="18" font-weight="800">X+</text>
+          <line x1="60" y1="286" x2="60" y2="220" stroke="#16a34a" stroke-width="4" marker-end="url(#arrowGreen)"/>
+          <text x="42" y="311" fill="#15803d" font-size="18" font-weight="800">Y+</text>
+          <text x="280" y="${showX ? (side === "back" ? 84 : 286) : 286}" text-anchor="middle" fill="#111827" font-size="13" font-weight="800">${showX ? `X-axis magazine on ${side} side` : `Y-axis magazine on ${side} side`}</text>
+          <defs>
+            <marker id="arrowBlue" markerWidth="7" markerHeight="7" refX="5" refY="2" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,4 L6,2 z" fill="#2563eb"/></marker>
+            <marker id="arrowGreen" markerWidth="7" markerHeight="7" refX="5" refY="2" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,4 L6,2 z" fill="#16a34a"/></marker>
+          </defs>
+        </svg>
+      `;
+    }
+
+    function frontMagazineSvg() {
+      return `
+          <line x1="108" y1="264" x2="470" y2="264" stroke="#334155" stroke-width="5"/>
+          <rect x="120" y="220" width="338" height="40" rx="6" fill="#111827"/>
+          ${[154, 210, 266, 322, 378, 434].map((x, i) => `<line x1="${x}" y1="220" x2="${x}" y2="260" stroke="${["#f59e0b", "#38bdf8", "#e2e8f0", "#a78bfa", "#22c55e", "#ef4444"][i]}" stroke-width="7"/>`).join("")}
+      `;
+    }
+
+    function zDiagram() {
+      return `
+        <svg viewBox="0 0 560 330" role="img" aria-label="Front view safe Z and engage Z">
+          <rect x="50" y="34" width="460" height="260" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+          ${frontMagazineSvg()}
+          <line x1="112" y1="94" x2="390" y2="94" stroke="#2563eb" stroke-width="3" stroke-dasharray="8 6"/>
+          <rect x="390" y="78" width="118" height="32" rx="7" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+          <text x="449" y="99" text-anchor="middle" fill="#1e3a8a" font-size="13" font-weight="800">Safe Z ${num(state.safeZ)}</text>
+          <line x1="112" y1="236" x2="394" y2="236" stroke="#f59e0b" stroke-width="3" stroke-dasharray="8 6"/>
+          <rect x="394" y="220" width="92" height="32" rx="7" fill="#fff7ed" stroke="#f59e0b" stroke-width="2"/>
+          <text x="440" y="241" text-anchor="middle" fill="#92400e" font-size="13" font-weight="800">Engage Z</text>
+          <rect x="268" y="132" width="62" height="72" rx="12" fill="#334155"/>
+          <rect x="291" y="204" width="16" height="20" rx="6" fill="#111827"/>
+          <rect x="296" y="224" width="6" height="28" rx="3" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+          <path d="M284 220 L284 254 Q284 264 294 264 H304 Q314 264 314 254 L314 220" fill="none" stroke="#f59e0b" stroke-width="3" stroke-linecap="round"/>
+          <text x="278" y="123" fill="#334155" font-size="14" font-weight="800">Lowest point clears here</text>
+          <text x="278" y="284" fill="#475569" font-size="15" font-weight="800">Front view of bed-mounted magazine</text>
+        </svg>
+      `;
+    }
+
+    function toolsetterDiagram() {
+      return `
+        <svg viewBox="0 0 560 330" role="img" aria-label="Toolsetter XY and probe Z diagram">
+          <rect x="42" y="34" width="476" height="260" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+          <rect x="72" y="70" width="205" height="200" rx="9" fill="#e5e7eb" stroke="#334155" stroke-width="3"/>
+          <rect x="98" y="96" width="150" height="124" rx="5" fill="#fff" stroke="#94a3b8" stroke-width="2"/>
+          <circle cx="174" cy="138" r="22" fill="#334155"/>
+          <circle cx="174" cy="138" r="11" fill="#111827"/>
+          <circle cx="206" cy="238" r="20" fill="#dbeafe" stroke="#2563eb" stroke-width="4"/>
+          <circle cx="206" cy="238" r="8" fill="#2563eb"/>
+          <path d="M174 138 L206 138 L206 210" fill="none" stroke="#2563eb" stroke-width="4" stroke-linecap="round" marker-end="url(#xyArrow)"/>
+          <text x="206" y="280" text-anchor="middle" fill="#1e3a8a" font-size="13" font-weight="800">Toolsetter X/Y</text>
+          <line x1="324" y1="266" x2="496" y2="266" stroke="#334155" stroke-width="5"/>
+          <rect x="386" y="218" width="58" height="48" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="4"/>
+          <rect x="401" y="208" width="28" height="10" rx="4" fill="#bfdbfe" stroke="#1d4ed8" stroke-width="3"/>
+          <rect x="384" y="72" width="58" height="64" rx="12" fill="#334155"/>
+          <rect x="405" y="136" width="16" height="20" rx="6" fill="#111827"/>
+          <rect x="410" y="156" width="6" height="26" rx="3" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+          <line x1="314" y1="184" x2="506" y2="184" stroke="#2563eb" stroke-width="3" stroke-dasharray="8 6"/>
+          <line x1="314" y1="222" x2="506" y2="222" stroke="#7c3aed" stroke-width="3" stroke-dasharray="8 6"/>
+          <text x="315" y="178" text-anchor="start" fill="#1e3a8a" font-size="12" font-weight="800">Probe start Z ${num(state.toolsetterRapidZ)}</text>
+          <text x="416" y="246" text-anchor="middle" fill="#5b21b6" font-size="12" font-weight="800">Z limit ${num(state.toolsetterZ)}</text>
+          <line x1="470" y1="222" x2="470" y2="196" stroke="#16a34a" stroke-width="4" marker-end="url(#greenUp)"/>
+          <text x="462" y="194" text-anchor="end" fill="#166534" font-size="12" font-weight="800">Retract ${num(state.probeRetract)}</text>
+          <defs>
+            <marker id="xyArrow" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L7,3 z" fill="#2563eb"/></marker>
+            <marker id="greenUp" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L7,3 z" fill="#16a34a"/></marker>
+          </defs>
+        </svg>
+      `;
+    }
+
+    function spinDiagram() {
+      return `
+        <svg viewBox="0 0 560 320" role="img" aria-label="Top-down spindle rotation directions">
+          <rect x="42" y="28" width="476" height="250" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+          <text x="280" y="54" text-anchor="middle" fill="#475569" font-size="13" font-weight="800">Direction shown is spindle rotation from a top-down view</text>
+          <rect x="76" y="78" width="190" height="170" rx="9" fill="#fff7ed" stroke="#fed7aa" stroke-width="2"/>
+          <rect x="294" y="78" width="190" height="170" rx="9" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+          <text x="171" y="106" text-anchor="middle" fill="#92400e" font-size="15" font-weight="800">Unload / loosen</text>
+          <text x="389" y="106" text-anchor="middle" fill="#1e3a8a" font-size="15" font-weight="800">Load / tighten</text>
+          <path d="M214 174 A43 43 0 0 0 128 174" fill="none" stroke="#f97316" stroke-width="7" stroke-linecap="round" marker-end="url(#ccwArrow)"/>
+          <path d="M346 174 A43 43 0 0 1 432 174" fill="none" stroke="#2563eb" stroke-width="7" stroke-linecap="round" marker-end="url(#cwArrow)"/>
+          <rect x="135" y="162" width="72" height="28" rx="7" fill="#fffbeb" stroke="#f59e0b" stroke-width="2"/>
+          <text x="171" y="181" text-anchor="middle" fill="#92400e" font-size="11" font-weight="800">${state.unloadDirection.toUpperCase()} / ${state.unloadDirection === "ccw" ? "M4" : "M3"}</text>
+          <rect x="353" y="162" width="72" height="28" rx="7" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+          <text x="389" y="181" text-anchor="middle" fill="#1e3a8a" font-size="11" font-weight="800">${state.loadDirection.toUpperCase()} / ${state.loadDirection === "cw" ? "M3" : "M4"}</text>
+          <text x="280" y="300" text-anchor="middle" fill="#475569" font-size="13" font-weight="800">Action order: start spin, final Z entry, dwell, stop, retract</text>
+          <defs>
+            <marker id="ccwArrow" viewBox="0 0 18 18" markerWidth="18" markerHeight="18" refX="0" refY="9" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L18,9 L0,18 z" fill="#f97316"/></marker>
+            <marker id="cwArrow" viewBox="0 0 18 18" markerWidth="18" markerHeight="18" refX="0" refY="9" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L18,9 L0,18 z" fill="#2563eb"/></marker>
+          </defs>
+        </svg>
+      `;
+    }
+
+    function pocketMeasureDiagram() {
+      const horizontal = state.magazineAxis === "x";
+      const positive = state.pocketDirection !== "negative";
+      const pocketCount = Math.max(1, Math.round(Number(state.pocketCount) || 1));
+      const pocket1 = horizontal
+        ? { x: positive ? 132 : 428, y: 178 }
+        : { x: 280, y: positive ? 226 : 78 };
+      const pocket2 = horizontal
+        ? { x: pocket1.x + (positive ? 64 : -64), y: 178 }
+        : { x: 280, y: pocket1.y + (positive ? -42 : 42) };
+      const arrowStart = horizontal
+        ? { x: pocket1.x, y: 258 }
+        : { x: 198, y: pocket1.y };
+      const arrowEnd = horizontal
+        ? { x: pocket1.x + (positive ? 190 : -190), y: 258 }
+        : { x: 198, y: pocket1.y + (positive ? -168 : 168) };
+      const pitchLine = horizontal
+        ? `<line x1="${pocket1.x}" y1="122" x2="${pocket2.x}" y2="122" stroke="#2563eb" stroke-width="3" marker-start="url(#pitchStart)" marker-end="url(#pitchEnd)"/>
+           <line x1="${pocket1.x}" y1="136" x2="${pocket1.x}" y2="204" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5"/>
+           <line x1="${pocket2.x}" y1="136" x2="${pocket2.x}" y2="204" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5"/>`
+        : `<line x1="358" y1="${pocket2.y}" x2="358" y2="${pocket1.y}" stroke="#2563eb" stroke-width="3" marker-start="url(#pitchStart)" marker-end="url(#pitchEnd)"/>
+           <line x1="244" y1="${pocket1.y}" x2="316" y2="${pocket1.y}" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5"/>
+           <line x1="244" y1="${pocket2.y}" x2="316" y2="${pocket2.y}" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5"/>`;
+      const pitchLabel = horizontal
+        ? { x: (pocket1.x + pocket2.x) / 2, y: 112 }
+        : { x: 392, y: (pocket1.y + pocket2.y) / 2 + 5 };
+      const directionLabel = horizontal
+        ? { x: positive ? 344 : 216, y: 264, anchor: positive ? "start" : "end" }
+        : { x: 198, y: positive ? 44 : 286, anchor: "middle" };
+      const pockets = Array.from({ length: Math.min(pocketCount, 6) }).map((_, index) => {
+        const x = horizontal ? pocket1.x + index * 64 * (positive ? 1 : -1) : pocket1.x;
+        const y = horizontal ? pocket1.y : pocket1.y + index * 42 * (positive ? -1 : 1);
+        return `
+          <circle cx="${x}" cy="${y}" r="18" fill="${index === 0 ? "#f59e0b" : "#dbeafe"}" stroke="#1d4ed8" stroke-width="3"/>
+          <text x="${x}" y="${y + 5}" text-anchor="middle" fill="#111827" font-size="13" font-weight="900">${index + 1}</text>
+        `;
+      }).join("");
+
+      return `
+        <svg viewBox="0 0 560 320" role="img" aria-label="Pocket center and spacing measurement diagram">
+          <rect x="42" y="32" width="476" height="256" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+          <rect x="${horizontal ? 96 : 244}" y="${horizontal ? 150 : 42}" width="${horizontal ? 368 : 72}" height="${horizontal ? 56 : 226}" rx="8" fill="#111827"/>
+          ${pockets}
+          ${pitchLine}
+          <text x="${pitchLabel.x}" y="${pitchLabel.y}" text-anchor="middle" fill="#1e3a8a" font-size="13" font-weight="800">Pitch ${num(state.pocketPitch)}</text>
+          <line x1="${arrowStart.x}" y1="${arrowStart.y}" x2="${arrowEnd.x}" y2="${arrowEnd.y}" stroke="#16a34a" stroke-width="4" marker-end="url(#numberArrow)"/>
+          <text x="${directionLabel.x}" y="${directionLabel.y}" text-anchor="${directionLabel.anchor}" fill="#166534" font-size="13" font-weight="800">Tool numbers increase ${pocketDirectionLabel()}</text>
+          <rect x="54" y="52" width="154" height="50" rx="7" fill="#fff7ed" stroke="#f59e0b" stroke-width="2"/>
+          <text x="131" y="73" text-anchor="middle" fill="#92400e" font-size="12" font-weight="800">Pocket 1 center</text>
+          <text x="131" y="91" text-anchor="middle" fill="#92400e" font-size="11" font-weight="800">X ${num(state.firstPocketX)}  Y ${num(state.firstPocketY)}</text>
+          <text x="280" y="306" text-anchor="middle" fill="#475569" font-size="13" font-weight="800">Measure center to center in machine coordinates, millimeters only</text>
+          <defs>
+            <marker id="pitchStart" markerWidth="7" markerHeight="7" refX="2" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M6,0 L0,3 L6,6 z" fill="#2563eb"/></marker>
+            <marker id="pitchEnd" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L7,3 L0,6 z" fill="#2563eb"/></marker>
+            <marker id="numberArrow" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L7,3 z" fill="#16a34a"/></marker>
+          </defs>
+        </svg>
+      `;
+    }
+
+    function motionDiagram() {
+      return `
+        <svg viewBox="0 0 560 330" role="img" aria-label="Magazine motion feed sequence diagram">
+          <rect x="42" y="30" width="476" height="264" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+          ${frontMagazineSvg()}
+          <path d="M152 86 H380" fill="none" stroke="#2563eb" stroke-width="5" marker-end="url(#travelArrow)"/>
+          <rect x="180" y="51" width="180" height="34" rx="7" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+          <text x="270" y="73" text-anchor="middle" fill="#1e3a8a" font-size="12" font-weight="800">Travel ${int(state.travelFeed)} mm/min</text>
+          <text x="266" y="112" text-anchor="middle" fill="#1e3a8a" font-size="14" font-weight="800">safe Z XY move</text>
+
+          <rect x="396" y="88" width="62" height="72" rx="12" fill="#334155"/>
+          <rect x="419" y="160" width="16" height="20" rx="6" fill="#111827"/>
+          <rect x="424" y="180" width="6" height="30" rx="3" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+
+          <line x1="394" y1="92" x2="394" y2="212" stroke="#f59e0b" stroke-width="5" marker-end="url(#engageArrow)"/>
+          <rect x="402" y="118" width="142" height="34" rx="7" fill="#fff7ed" stroke="#f59e0b" stroke-width="2"/>
+          <text x="473" y="140" text-anchor="middle" fill="#92400e" font-size="12" font-weight="800">Engage ${int(state.engageFeed)} mm/min</text>
+
+          <line x1="338" y1="234" x2="338" y2="154" stroke="#16a34a" stroke-width="5" marker-end="url(#retractArrow)"/>
+          <rect x="184" y="152" width="148" height="34" rx="7" fill="#ecfdf5" stroke="#86efac" stroke-width="2"/>
+          <text x="258" y="174" text-anchor="middle" fill="#166534" font-size="12" font-weight="800">Retract ${int(state.retractFeed)} mm/min</text>
+
+          <text x="280" y="308" text-anchor="middle" fill="#475569" font-size="13" font-weight="800">Sequence: safe Z travel, engage into socket, retract clear of pocket</text>
+          <defs>
+            <marker id="travelArrow" markerWidth="6" markerHeight="6" refX="4.7" refY="2.5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,5 L6,2.5 z" fill="#2563eb"/></marker>
+            <marker id="engageArrow" markerWidth="6" markerHeight="6" refX="4.7" refY="2.5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,5 L6,2.5 z" fill="#f59e0b"/></marker>
+            <marker id="retractArrow" markerWidth="6" markerHeight="6" refX="4.7" refY="2.5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,5 L6,2.5 z" fill="#16a34a"/></marker>
+          </defs>
+        </svg>
+      `;
+    }
+
+    function sensorDiagram() {
+      return `
+        <svg viewBox="0 0 560 300" role="img" aria-label="Spindle tool detection beam diagram">
+          <rect x="42" y="28" width="476" height="232" rx="10" fill="#f8fafc" stroke="#cbd5e1" stroke-width="2"/>
+          <text x="280" y="58" text-anchor="middle" fill="#475569" font-size="13" font-weight="800">One tool-present beam verifies both load and unload</text>
+
+          <rect x="90" y="86" width="170" height="116" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="2"/>
+          <rect x="122" y="104" width="106" height="42" rx="9" fill="#334155"/>
+          <rect x="166" y="146" width="18" height="28" rx="6" fill="#111827"/>
+          <rect x="172" y="174" width="6" height="22" rx="3" fill="#94a3b8" stroke="#64748b" stroke-width="1"/>
+          <path d="M116 178 H234" stroke="#2563eb" stroke-width="4" stroke-dasharray="8 7"/>
+          <circle cx="175" cy="178" r="8" fill="#22c55e"/>
+          <text x="175" y="222" text-anchor="middle" fill="#1e3a8a" font-size="13" font-weight="800">After load: beam blocked</text>
+
+          <rect x="300" y="86" width="170" height="116" rx="8" fill="#fff7ed" stroke="#fed7aa" stroke-width="2"/>
+          <rect x="332" y="104" width="106" height="42" rx="9" fill="#334155"/>
+          <rect x="376" y="146" width="18" height="20" rx="6" fill="#111827"/>
+          <path d="M326 178 H444" stroke="#f59e0b" stroke-width="4" stroke-dasharray="8 7"/>
+          <circle cx="385" cy="178" r="8" fill="#e2e8f0" stroke="#94a3b8" stroke-width="2"/>
+          <text x="385" y="222" text-anchor="middle" fill="#92400e" font-size="13" font-weight="800">After unload: beam clear</text>
+
+          <text x="280" y="246" text-anchor="middle" fill="#475569" font-size="12" font-weight="800">Set the pin to NO_PIN until basic motion is proven</text>
+        </svg>
+      `;
+    }
+
+    function outputReview() {
+      const mode = state.outputMode === "merged" ? "Merged config" : "Section only";
+      const spindle = String(state.spindleSection || "H100").trim() || "H100";
+      const oldBlock = state.existingConfig.match(/^openatc:\s*(#.*)?$/m) ? "will be replaced" : "none found";
+      return `
+        <div class="status-grid" id="outputReview">
+          <div class="status-card">
+            <strong>Output mode</strong>
+            <div class="hint">${mode}</div>
+          </div>
+          <div class="status-card">
+            <strong>Spindle section</strong>
+            <div class="hint">${escapeHtml(spindle)} gets <code>atc: openatc</code> in merged mode.</div>
+          </div>
+          <div class="status-card">
+            <strong>Existing OpenATC block</strong>
+            <div class="hint">${oldBlock}</div>
+          </div>
+          <div class="status-card">
+            <strong>Units</strong>
+            <div class="hint">All generated coordinates, distances, and feeds are millimeters.</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderStepBody() {
+      if (currentStep === 0) {
+        return `
+          <div class="diagram-card">${magazineDiagram()}</div>
+          <div class="check-grid">
+            <div class="check-item">
+              <span class="check-dot">1</span>
+              <div><strong>Home the machine</strong><div class="hint">Record values after FluidNC has a trusted machine coordinate system.</div></div>
+            </div>
+            <div class="check-item">
+              <span class="check-dot">2</span>
+              <div><strong>Back up your config</strong><div class="hint">Keep a known-good YAML copy before adding <code>openatc:</code>.</div></div>
+            </div>
+            <div class="check-item">
+              <span class="check-dot">3</span>
+              <div><strong>Test with no cutter</strong><div class="hint">Dry-run each phase before allowing a complete tool change.</div></div>
+            </div>
+            <div class="check-item">
+              <span class="check-dot">4</span>
+              <div><strong>Prove spindle direction</strong><div class="hint">Confirm CW/M3 and CCW/M4 on your machine before load/unload testing.</div></div>
+            </div>
+          </div>
+          <div class="grid-two">
+            <div class="note">
+              <strong>Use machine coordinates only</strong>
+              <p>All X/Y/Z values must be FluidNC machine coordinates in millimeters. Do not enter work coordinates or inch values.</p>
+            </div>
+            <div class="note warning">
+              <strong>Dry-run first</strong>
+              <p>Measure with no cutter installed. Verify safe Z, pocket positions, engagement depth, toolsetter position, and spindle direction one phase at a time.</p>
+            </div>
+          </div>
+          <ul class="small-list" style="margin-top:14px">
+            <li>Use <code>M61 Q0</code> to declare an empty spindle before first testing.</li>
+            <li>Set optional tool detection to <code>NO_PIN</code> until the basic motion is proven.</li>
+            <li>Use the generated values as a starting config, then tune on the real machine.</li>
+          </ul>
+        `;
+      }
+
+      if (currentStep === 1) {
+        const sideChoices = state.magazineAxis === "x"
+          ? choice("Front side", "front", "magazineSide", "Magazine below the bed in the top-down view.") + choice("Back side", "back", "magazineSide", "Magazine above the bed in the top-down view.")
+          : choice("Left side", "left", "magazineSide", "Magazine to the left of the bed in the top-down view.") + choice("Right side", "right", "magazineSide", "Magazine to the right of the bed in the top-down view.");
+        return `
+          <div class="substeps">
+            <div class="substep done"><strong>2.1 Axis and side</strong><div class="hint">How the row sits on the bed.</div></div>
+            <div class="substep active"><strong>2.2 Pocket 1 center</strong><div class="hint">Machine X/Y at the first pocket.</div></div>
+            <div class="substep active"><strong>2.3 Pitch and count</strong><div class="hint">Distance and number of pockets.</div></div>
+          </div>
+          <div class="diagram-card">${magazineDiagram()}</div>
+          <div class="grid-two">
+            <div>
+              <div class="choice-row">
+                ${choice("X-axis row", "x", "magazineAxis", "Pockets run left to right. Side is front or back.")}
+                ${choice("Y-axis row", "y", "magazineAxis", "Pockets run front to back. Side is left or right.")}
+              </div>
+            </div>
+            <div>
+              <div class="choice-row">${sideChoices}</div>
+            </div>
+          </div>
+          <div class="diagram-card" style="margin-top:14px">${pocketMeasureDiagram()}</div>
+          <div class="grid-two" style="margin-top:14px">
+            <div class="choice-row">
+              ${choice(`${state.magazineAxis.toUpperCase()}+ numbering`, "positive", "pocketDirection", "Pocket numbers increase toward machine positive on the selected axis.")}
+              ${choice(`${state.magazineAxis.toUpperCase()}- numbering`, "negative", "pocketDirection", "Pocket numbers increase toward machine negative on the selected axis.")}
+            </div>
+            <div class="note" style="margin-top:0">
+              <strong>Generated pitch sign</strong>
+              <p>The wizard writes <code>pocket_pitch_mm: ${num(signedPocketPitch())}</code>. Positive pitch means ${state.magazineAxis.toUpperCase()}+; negative pitch means ${state.magazineAxis.toUpperCase()}-.</p>
+            </div>
+          </div>
+          <div class="grid-three" style="margin-top:14px">
+            ${field("Pocket 1 X", "firstPocketX", "mm", "Machine X at pocket 1 center.")}
+            ${field("Pocket 1 Y", "firstPocketY", "mm", "Machine Y at pocket 1 center.")}
+            ${field("Pocket count", "pocketCount", "tools", "Numbered tools map to pockets 1..count.")}
+            ${field("Pocket spacing", "pocketPitch", "mm", "Positive center-to-center distance. Direction controls the generated sign.")}
+          </div>
+          <div class="note warning">
+            <strong>Pocket numbering rule</strong>
+            <p>Pick pocket 1 as the physical first pocket, then choose whether tool numbers increase toward ${state.magazineAxis.toUpperCase()}+ or ${state.magazineAxis.toUpperCase()}-. This lets pocket 1 be either end of the row.</p>
+          </div>
+        `;
+      }
+
+      if (currentStep === 2) {
+        return `
+          <div class="substeps">
+            <div class="substep active"><strong>3.1 Safe Z</strong><div class="hint">Lowest spindle/tool point clears hardware before XY moves.</div></div>
+            <div class="substep active"><strong>3.2 Engage Z</strong><div class="hint">Collet nut seats inside the pocket socket.</div></div>
+            <div class="substep active"><strong>3.3 Speeds</strong><div class="hint">Travel, engage, and retract feed rates.</div></div>
+          </div>
+          <div class="diagram-card">${zDiagram()}</div>
+          <div class="grid-two">
+            ${field("Safe travel Z", "safeZ", "mm", "Machine Z where the lowest point clears the magazine before XY moves.")}
+            ${field("Engage Z", "engageZ", "mm", "Machine Z where the collet nut seats freely in the pocket socket.")}
+          </div>
+          <div class="diagram-card" style="margin-top:14px">${motionDiagram()}</div>
+          <div class="grid-three" style="margin-top:14px">
+            ${field("Travel feed", "travelFeed", "mm/min", "Rapid-style generated XY/Z travel feed.")}
+            ${field("Engage feed", "engageFeed", "mm/min", "Controlled feed down into the socket.")}
+            ${field("Retract feed", "retractFeed", "mm/min", "Controlled feed out of the socket.")}
+          </div>
+          <div class="note warning">
+            <strong>Engage Z is a seated-collet value</strong>
+            <p>Jog down until the collet nut sits freely in the socket, then add a small safety offset only after confirming it does not crash into the rack.</p>
+          </div>
+        `;
+      }
+
+      if (currentStep === 3) {
+        return `
+          <div class="diagram-card">${toolsetterDiagram()}</div>
+          <div class="grid-three">
+            ${field("Toolsetter X", "toolsetterX", "mm", "Machine X over the fixed toolsetter.")}
+            ${field("Toolsetter Y", "toolsetterY", "mm", "Machine Y over the fixed toolsetter.")}
+            ${field("Toolsetter Z limit", "toolsetterZ", "mm", "Lower probe limit. The probe should trigger before this.")}
+            ${field("Probe start Z", "toolsetterRapidZ", "mm", "Height above the sensor before probing down.")}
+            ${field("Seek rate", "probeSeek", "mm/min", "First probing pass feed.")}
+            ${field("Feed rate", "probeFeed", "mm/min", "Final slow probing pass feed.")}
+            ${field("Probe retract", "probeRetract", "mm", "Retract after the first probe touch.")}
+          </div>
+          <div class="grid-two">
+            <div class="note">
+              <strong>XY target</strong>
+              <p>The spindle should be centered over the fixed toolsetter before probing starts. Measure X/Y with a short, safe tool installed.</p>
+            </div>
+            <div class="note warning">
+              <strong>Z limit</strong>
+              <p>The toolsetter should trigger before the Z limit. The limit is the last safe stop, not the expected touch point.</p>
+            </div>
+          </div>
+        `;
+      }
+
+      if (currentStep === 4) {
+        return `
+          <div class="diagram-card">${spinDiagram()}</div>
+          <div class="grid-two">
+            <div class="note">
+              <strong>Load / tighten</strong>
+              <div class="grid-two" style="margin-top:10px">
+                ${selectField("Direction", "loadDirection", ["cw", "ccw"], "Most standard ER collets tighten CW.")}
+                ${field("RPM", "loadRpm", "rpm", "Start low and increase carefully.")}
+                ${field("Spin time", "loadSpinMs", "ms", "1000 ms = 1 second.")}
+                ${field("Passes", "loadPasses", "passes", "More passes can help seating.")}
+              </div>
+              <div style="margin-top:12px">${field("Retract between passes", "loadRetract", "mm", "Retract high enough that the collet is not engaging the pocket.")}</div>
+              <p class="hint" style="margin:12px 0 0">Passes repeat the tighten action. Retract-between-passes lifts clear before the next impact-style entry.</p>
+            </div>
+            <div class="note warning">
+              <strong>Unload / loosen</strong>
+              <div class="grid-two" style="margin-top:10px">
+                ${selectField("Direction", "unloadDirection", ["ccw", "cw"], "Most standard ER collets loosen CCW.")}
+                ${field("RPM", "unloadRpm", "rpm", "If unload fails, bump RPM by 100 and retest.")}
+                ${field("Spin time", "unloadSpinMs", "ms", "1000 ms = 1 second.")}
+              </div>
+              <p class="hint" style="margin:12px 0 0">If tool detection sees a failed unload, OpenATC retries once using the load retract-between-passes distance.</p>
+            </div>
+          </div>
+          <ul class="small-list" style="margin-top:14px">
+            <li>The direction diagram is top-down spindle rotation.</li>
+            <li>Most ER setups are CW to tighten and CCW to loosen, but verify your spindle wiring.</li>
+            <li>The spindle starts before final Z entry so the pocket receives the impact-style loosen or tighten action.</li>
+          </ul>
+        `;
+      }
+
+      if (currentStep === 5) {
+        return `
+          <div class="diagram-card">${sensorDiagram()}</div>
+          <div class="grid-two">
+            <div>
+              <div class="note">
+                <strong>Sensor polarity</strong>
+                <p>Use FluidNC pin options so logical true means the beam is blocked by a tool held in the spindle. This supports normally-open and normally-closed switches when configured correctly.</p>
+              </div>
+              <ul class="small-list" style="margin-top:14px">
+                <li><code>tool_in_spindle_pin</code>: true when the tool blocks the beam.</li>
+                <li>After load, OpenATC expects the loaded tool to block the beam.</li>
+                <li>After unload, OpenATC expects the beam to be clear because the tool was dropped into the pocket.</li>
+                <li>If unload detection still sees a tool, OpenATC retries once after retracting clear.</li>
+              </ul>
+            </div>
+            <div class="choices">
+              ${field("Spindle tool-detection pin", "toolInSpindlePin", "pin", "Use NO_PIN until basic motion is proven.", "text")}
+              ${field("Spindle config section", "spindleSection", "YAML key", "The wizard will add or replace `atc: openatc` in this section.", "text")}
+            </div>
+          </div>
+          <div class="status-grid">
+            <div class="status-card">
+              <strong>No sensor installed</strong>
+              <div class="hint">Use <code>NO_PIN</code>. Firmware skips that check.</div>
+            </div>
+            <div class="status-card">
+              <strong>Sensor installed</strong>
+              <div class="hint">Example: <code>gpio.34</code>, or <code>!gpio.34</code> if your input reads backward. Pick your board's real input pin and polarity so true means a tool blocks the beam.</div>
+            </div>
+            <div class="status-card">
+              <strong>Failed unload retry</strong>
+              <div class="hint">If the beam is still blocked after unload, OpenATC can run one more unload pass after retracting clear.</div>
+            </div>
+            <div class="status-card">
+              <strong>Start simple</strong>
+              <div class="hint">Leave tool detection disabled until the basic load/unload path is mechanically proven.</div>
+            </div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="grid-two">
+          <div>
+            <div class="note">
+              <strong>Generate only the OpenATC section</strong>
+              <p>Use this when you want to paste the section into your own FluidNC config manually.</p>
+            </div>
+            <div class="note">
+              <strong>Add to an existing config</strong>
+              <p>Paste or upload your current FluidNC YAML. The wizard removes any old top-level <code>openatc:</code> block, adds the new one, and adds <code>atc: openatc</code> to your spindle section.</p>
+            </div>
+            <div class="output-tabs" style="margin-top:14px">
+              <button type="button" class="${state.outputMode === "section" ? "active" : ""}" data-mode="section">Section only</button>
+              <button type="button" class="${state.outputMode === "merged" ? "active" : ""}" data-mode="merged">Merged config</button>
+            </div>
+            ${outputReview()}
+          </div>
+          <div>
+            <div class="field">
+              <label for="configFile">Upload config</label>
+              <div class="unit-input">
+                <input id="configFile" type="file" accept=".yaml,.yml,.txt">
+              </div>
+              <div class="hint">The file stays in your browser. Nothing is uploaded to a server.</div>
+            </div>
+            <div class="field" style="margin-top:12px">
+              <label for="existingConfig">Existing FluidNC config</label>
+              <textarea class="plain" id="existingConfig" spellcheck="false" placeholder="Paste your config.yaml here">${escapeHtml(state.existingConfig)}</textarea>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      }[char]));
+    }
+
+    function renderSteps() {
+      document.getElementById("steps").innerHTML = stepMeta.map((step, index) => `
+        <button type="button" class="step-tab ${index === currentStep ? "active" : ""}" data-step="${index}">
+          <span class="step-number">${index + 1}</span>
+          <span>${step[0]}</span>
+        </button>
+      `).join("");
+    }
+
+    function bindInputs() {
+      document.querySelectorAll("[data-field]").forEach((node) => {
+        node.addEventListener("input", (event) => {
+          const key = event.target.dataset.field;
+          const value = event.target.type === "number" ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value;
+          state[key] = value;
+          updateOutputOnly();
+        });
+        node.addEventListener("change", (event) => {
+          const key = event.target.dataset.field;
+          const value = event.target.type === "number" ? (event.target.value === "" ? "" : Number(event.target.value)) : event.target.value;
+          setField(key, value);
+        });
+      });
+
+      document.querySelectorAll("[data-choice-key]").forEach((node) => {
+        node.addEventListener("click", () => setField(node.dataset.choiceKey, node.dataset.choiceValue));
+      });
+
+      document.querySelectorAll("[data-mode]").forEach((node) => {
+        node.addEventListener("click", () => {
+          state.outputMode = node.dataset.mode;
+          render();
+        });
+      });
+
+      const existing = document.getElementById("existingConfig");
+      if (existing) {
+        existing.addEventListener("input", (event) => {
+          state.existingConfig = event.target.value;
+          updateOutputOnly();
+        });
+      }
+
+      const file = document.getElementById("configFile");
+      if (file) {
+        file.addEventListener("change", async (event) => {
+          const selected = event.target.files && event.target.files[0];
+          if (!selected) return;
+          state.existingConfig = await selected.text();
+          state.outputMode = "merged";
+          render();
+        });
+      }
+    }
+
+    function updateOutputOnly() {
+      document.getElementById("configOutput").value = outputText();
+      const review = document.getElementById("outputReview");
+      if (review) review.outerHTML = outputReview();
+      const validation = validateConfig();
+      const validationPanel = document.getElementById("validationPanel");
+      if (validationPanel) validationPanel.innerHTML = validationSummary();
+      const blocked = validation.errors.length > 0;
+      ["copyTop", "copyPreview", "downloadBtn"].forEach((id) => {
+        const button = document.getElementById(id);
+        if (!button) return;
+        button.disabled = blocked;
+        button.title = blocked ? "Fix validation errors before exporting config." : "";
+      });
+    }
+
+    function render() {
+      const meta = stepMeta[currentStep];
+      document.getElementById("stepKicker").textContent = `Step ${currentStep + 1} of ${stepMeta.length}`;
+      document.getElementById("stepTitle").textContent = meta[1];
+      document.getElementById("stepIntro").textContent = meta[2];
+      document.getElementById("stepBody").innerHTML = renderStepBody();
+      document.getElementById("backBtn").disabled = currentStep === 0;
+      document.getElementById("nextBtn").textContent = currentStep === stepMeta.length - 1 ? "Finish" : "Next";
+      document.getElementById("tabSection").classList.toggle("active", state.outputMode === "section");
+      document.getElementById("tabMerged").classList.toggle("active", state.outputMode === "merged");
+      renderSteps();
+      bindInputs();
+      updateOutputOnly();
+    }
+
+    async function copyOutput() {
+      if (validateConfig().errors.length > 0) {
+        currentStep = stepMeta.length - 1;
+        render();
+        return;
+      }
+      const text = outputText();
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        const output = document.getElementById("configOutput");
+        output.focus();
+        output.select();
+        document.execCommand("copy");
+      }
+    }
+
+    function downloadOutput() {
+      if (validateConfig().errors.length > 0) {
+        currentStep = stepMeta.length - 1;
+        render();
+        return;
+      }
+      const blob = new Blob([outputText() + "\n"], { type: "text/yaml" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = state.outputMode === "merged" ? "config-openatc.yaml" : "openatc-section.yaml";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById("backBtn").addEventListener("click", () => {
+      currentStep = Math.max(0, currentStep - 1);
+      render();
+    });
+
+    document.getElementById("nextBtn").addEventListener("click", () => {
+      currentStep = Math.min(stepMeta.length - 1, currentStep + 1);
+      render();
+    });
+
+    document.getElementById("resetBtn").addEventListener("click", () => {
+      state = { ...defaultState, outputMode: state.outputMode, existingConfig: state.existingConfig };
+      render();
+    });
+
+    document.getElementById("jumpOutput").addEventListener("click", () => {
+      currentStep = stepMeta.length - 1;
+      render();
+    });
+
+    document.getElementById("copyTop").addEventListener("click", copyOutput);
+    document.getElementById("copyPreview").addEventListener("click", copyOutput);
+    document.getElementById("downloadBtn").addEventListener("click", downloadOutput);
+    document.getElementById("tabSection").addEventListener("click", () => {
+      state.outputMode = "section";
+      render();
+    });
+    document.getElementById("tabMerged").addEventListener("click", () => {
+      state.outputMode = "merged";
+      render();
+    });
+
+    document.getElementById("steps").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-step]");
+      if (!button) return;
+      currentStep = Number(button.dataset.step);
+      render();
+    });
+
+    render();
+  </script>
+</body>
+</html>

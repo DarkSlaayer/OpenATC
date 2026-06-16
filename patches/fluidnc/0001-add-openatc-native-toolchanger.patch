@@ -1,0 +1,1421 @@
+From 8ad40ef695d93a2e0215b875fa06106607d8acdb Mon Sep 17 00:00:00 2001
+From: OpenATC Maintainers <https://github.com/DarkSlaayer>
+Date: Tue, 16 Jun 2026 01:00:50 -0700
+Subject: [PATCH 1/3] Add OpenATC native toolchanger
+
+---
+ FluidNC/src/CMakeLists.txt                   |   1 +
+ FluidNC/src/GCode.cpp                        |  10 +-
+ FluidNC/src/ToolChangers/atc_openatc.cpp     | 390 +++++++++++++++
+ FluidNC/src/ToolChangers/atc_openatc.h       | 112 +++++
+ FluidNC/src/ToolChangers/atc_openatc_job.h   | 327 ++++++++++++
+ FluidNC/src/ToolChangers/atc_openatc_model.h | 501 +++++++++++++++++++
+ 6 files changed, 1339 insertions(+), 2 deletions(-)
+ create mode 100644 FluidNC/src/ToolChangers/atc_openatc.cpp
+ create mode 100644 FluidNC/src/ToolChangers/atc_openatc.h
+ create mode 100644 FluidNC/src/ToolChangers/atc_openatc_job.h
+ create mode 100644 FluidNC/src/ToolChangers/atc_openatc_model.h
+
+diff --git a/FluidNC/src/CMakeLists.txt b/FluidNC/src/CMakeLists.txt
+index f658c24..fbea7e3 100644
+--- a/FluidNC/src/CMakeLists.txt
++++ b/FluidNC/src/CMakeLists.txt
+@@ -137,6 +137,7 @@ idf_component_register(SRCS BTConfig.cpp
+ 							Spindles/VFD/YL620Protocol.cpp
+ 							ToolChangers/atc.cpp
+ 							ToolChangers/atc_manual.cpp
++							ToolChangers/atc_openatc.cpp
+ 							WebUI/Authentication.cpp
+ 							WebUI/Mdns.cpp
+ 							WebUI/NotificationsService.cpp
+diff --git a/FluidNC/src/GCode.cpp b/FluidNC/src/GCode.cpp
+index ae76b21..c859553 100644
+--- a/FluidNC/src/GCode.cpp
++++ b/FluidNC/src/GCode.cpp
+@@ -1669,7 +1669,9 @@ Error gc_execute_line(const char* input_line) {
+                 gc_state.spindle_speed = 0.0;
+             }
+             log_info("Current T:" << gc_state.current_tool << " Selected T:" << gc_state.selected_tool);
+-            spindle->tool_change(gc_state.selected_tool, false, false);
++            if (!spindle->tool_change(gc_state.selected_tool, false, false)) {
++                return Error::GcodeValueWordInvalid;
++            }
+             if (spindle->_atc_name == "" && spindle->_m6_macro.get().empty()) {  // if neither of these exist we need to set the value here
+                 gc_state.current_tool = gc_state.selected_tool;
+             }
+@@ -1681,6 +1683,7 @@ Error gc_execute_line(const char* input_line) {
+         if (gc_block.values.q < 0) {
+             return Error::NegativeValue;  // https://linuxcnc.org/docs/2.8/html/gcode/m-code.html#mcode:m61
+         }
++        uint32_t previous_selected_tool = gc_state.selected_tool;
+         gc_state.selected_tool = gc_block.values.q;
+         bool stopped_spindle   = false;  // was spindle stopped via the change
+         bool new_spindle       = false;  // was the spindle changed
+@@ -1692,7 +1695,10 @@ Error gc_execute_line(const char* input_line) {
+         if (new_spindle) {
+             gc_state.spindle_speed = 0.0;
+         }
+-        spindle->tool_change(gc_state.selected_tool, false, true);
++        if (!spindle->tool_change(gc_state.selected_tool, false, true)) {
++            gc_state.selected_tool = previous_selected_tool;
++            return Error::GcodeValueWordInvalid;
++        }
+         gc_state.current_tool = gc_block.values.q;
+         report_ovr_counter    = 0;  // Set to report change immediately
+         gc_ovr_changed();
+diff --git a/FluidNC/src/ToolChangers/atc_openatc.cpp b/FluidNC/src/ToolChangers/atc_openatc.cpp
+new file mode 100644
+index 0000000..e119fc1
+--- /dev/null
++++ b/FluidNC/src/ToolChangers/atc_openatc.cpp
+@@ -0,0 +1,390 @@
++// Copyright (c) 2026
++// Use of this source code is governed by a GPLv3 license that can be found in the LICENSE file.
++
++#include "atc_openatc.h"
++#include "atc_openatc_job.h"
++
++#include "GCode.h"
++#include "Job.h"
++#include "Limit.h"
++#include "Logging.h"
++#include "Machine/Axes.h"
++#include "Machine/Homing.h"
++#include "Protocol.h"
++#include "Report.h"
++#include "Spindles/Spindle.h"
++
++#include <limits>
++
++namespace ATCs {
++    class OpenATCJobChannel : public Channel {
++    public:
++        OpenATCJobChannel(OpenATC* owner,
++                          OpenATCChangePlan const& plan,
++                          axis_t magazine_axis,
++                          tool_t starting_tool,
++                          tool_t requested_tool,
++                          bool was_inch_mode)
++            : Channel("OpenATC", false),
++              _owner(owner),
++              _sequencer(this, plan, magazine_axis, starting_tool, requested_tool, was_inch_mode) {}
++
++        Error pollLine(char* line) override { return _sequencer.pollLine(line, Channel::maxLine, _line_number); }
++        void  ack(Error status) override { _sequencer.ack(status); }
++        size_t write(uint8_t c) override { return 0; }
++
++        OpenATCConfigView openatc_config_view() const { return _owner->config_view(); }
++        OpenATCSensorSnapshot openatc_sensor_snapshot() const { return _owner->sensor_snapshot(); }
++        void openatc_finish_tool_change(tool_t tool, bool have_reference_probe) { _owner->finish_tool_change(tool, have_reference_probe); }
++        void openatc_fail_tool_change(const char* message) { _owner->fail_tool_change(message); }
++
++    private:
++        OpenATC* _owner = nullptr;
++        OpenATCJobSequencer<OpenATCJobChannel> _sequencer;
++    };
++
++    void OpenATCActionSection::group(Configuration::HandlerBase& handler) {
++        handler.item("spindle_direction", direction_name, 1, 8);
++        handler.item("spindle_rpm", spindle_rpm, 1, 100000);
++        handler.item("spin_ms", spin_ms, 1, 60000);
++    }
++
++    void OpenATCActionSection::afterParse() {
++        OpenATCSpindleDirection parsed = OpenATCSpindleDirection::CW;
++        if (openatc_parse_spindle_direction(direction_name, parsed)) {
++            parsed_direction = parsed;
++        }
++    }
++
++    void OpenATCActionSection::validate() {
++        OpenATCSpindleDirection parsed = OpenATCSpindleDirection::CW;
++        Assert(openatc_parse_spindle_direction(direction_name, parsed), "OpenATC spindle_direction must be cw or ccw");
++
++        OpenATCActionConfig     cfg    = view();
++        OpenATCValidationResult result = openatc_validate_action(&cfg, "action section is required");
++        Assert(result.ok, "OpenATC action config invalid: %s", result.message);
++    }
++
++    OpenATCActionConfig OpenATCActionSection::view() const {
++        OpenATCActionConfig cfg;
++        cfg.direction                 = parsed_direction;
++        cfg.spindle_rpm               = spindle_rpm;
++        cfg.spin_ms                   = spin_ms;
++        cfg.passes                    = 1;
++        cfg.retract_between_passes_mm = 0.0f;
++        return cfg;
++    }
++
++    void OpenATCLoadActionSection::group(Configuration::HandlerBase& handler) {
++        OpenATCActionSection::group(handler);
++        handler.item("passes", passes, 1, 20);
++        handler.item("retract_between_passes_mm", retract_between_passes_mm, 0.0f, 1000.0f);
++    }
++
++    OpenATCActionConfig OpenATCLoadActionSection::view() const {
++        OpenATCActionConfig cfg = OpenATCActionSection::view();
++        cfg.passes                    = passes;
++        cfg.retract_between_passes_mm = retract_between_passes_mm;
++        return cfg;
++    }
++
++    OpenATC::~OpenATC() {
++        delete _load;
++        delete _unload;
++    }
++
++    void OpenATC::group(Configuration::HandlerBase& handler) {
++        handler.item("layout", _layout, 1, 16);
++        handler.item("magazine_axis", _magazine_axis, 1, 8);
++        handler.item("pocket_count", _pocket_count, 1, 100);
++        handler.item("first_pocket_mpos_mm", _first_pocket_mpos_mm);
++        handler.item("pocket_pitch_mm", _pocket_pitch_mm, 0.001f, 100000.0f);
++
++        handler.item("safe_z_mpos_mm", _safe_z_mpos_mm);
++        handler.item("engage_z_mpos_mm", _engage_z_mpos_mm);
++        handler.item("travel_feed_mm_per_min", _travel_feed_mm_per_min, 1.0f, 100000.0f);
++        handler.item("engage_feed_mm_per_min", _engage_feed_mm_per_min, 1.0f, 100000.0f);
++        handler.item("retract_feed_mm_per_min", _retract_feed_mm_per_min, 1.0f, 100000.0f);
++
++        handler.section("load", _load);
++        handler.section("unload", _unload);
++
++        handler.item("toolsetter_mpos_mm", _toolsetter_mpos_mm);
++        handler.item("toolsetter_rapid_z_mpos_mm", _toolsetter_rapid_z_mpos_mm);
++        handler.item("probe_seek_rate_mm_per_min", _probe_seek_rate_mm_per_min, 1.0f, 100000.0f);
++        handler.item("probe_feed_rate_mm_per_min", _probe_feed_rate_mm_per_min, 1.0f, 100000.0f);
++        handler.item("probe_retract_mm", _probe_retract_mm, 0.001f, 1000.0f);
++
++        handler.item("tool_in_spindle_pin", _tool_in_spindle_pin);
++        handler.item("pocket_tool_present_pin", _pocket_tool_present_pin);
++        handler.item("collet_clear_pin", _collet_clear_pin);
++    }
++
++    void OpenATC::afterParse() {
++        Assert(openatc_parse_magazine_axis(_magazine_axis, _parsed_magazine_axis), "OpenATC magazine_axis must be x or y");
++    }
++
++    void OpenATC::refresh_action_views() {
++        if (_load != nullptr) {
++            _load_view = _load->view();
++        }
++        if (_unload != nullptr) {
++            _unload_view = _unload->view();
++        }
++    }
++
++    OpenATCConfigView OpenATC::config_view() const {
++        return { _layout,
++                 _magazine_axis,
++                 _pocket_count,
++                 &_first_pocket_mpos_mm,
++                 _pocket_pitch_mm,
++                 _safe_z_mpos_mm,
++                 _engage_z_mpos_mm,
++                 _travel_feed_mm_per_min,
++                 _engage_feed_mm_per_min,
++                 _retract_feed_mm_per_min,
++                 _load == nullptr ? nullptr : &_load_view,
++                 _unload == nullptr ? nullptr : &_unload_view,
++                 &_toolsetter_mpos_mm,
++                 _toolsetter_rapid_z_mpos_mm,
++                 _probe_seek_rate_mm_per_min,
++                 _probe_feed_rate_mm_per_min,
++                 _probe_retract_mm };
++    }
++
++    void OpenATC::validate() {
++        refresh_action_views();
++        OpenATCValidationResult result = openatc_validate_config(config_view());
++        Assert(result.ok, "OpenATC config invalid: %s", result.message);
++    }
++
++    OpenATCBounds OpenATC::machine_bounds() const {
++        OpenATCBounds bounds;
++
++        for (axis_t axis = X_AXIS; axis <= Z_AXIS; ++axis) {
++            bounds.valid[axis] = Machine::Axes::_axis[axis] != nullptr;
++            if (bounds.valid[axis]) {
++                bounds.min[axis] = limitsMinPosition(axis);
++                bounds.max[axis] = limitsMaxPosition(axis);
++            }
++        }
++
++        return bounds;
++    }
++
++    bool OpenATC::required_axes_homed() const {
++        return Machine::Homing::axis_is_homed(X_AXIS) && Machine::Homing::axis_is_homed(Y_AXIS) &&
++               Machine::Homing::axis_is_homed(Z_AXIS);
++    }
++
++    bool OpenATC::fail_validation(const char* message) {
++        log_error("OpenATC " << message);
++        send_alarm(ExecAlarm::SpindleControl);
++        return false;
++    }
++
++    bool OpenATC::validate_spindle_direction(OpenATCActionSection const& action) {
++        if (action.parsed_direction != OpenATCSpindleDirection::CCW) {
++            return true;
++        }
++
++        if (spindle != nullptr && spindle->is_reversable) {
++            return true;
++        }
++
++        return fail_validation("ccw action requires a reversible spindle");
++    }
++
++    bool OpenATC::validate_runtime(tool_t requested_tool, bool allow_zero) {
++        refresh_action_views();
++
++        OpenATCValidationResult config_result = openatc_validate_config(config_view());
++        if (!config_result.ok) {
++            log_error("OpenATC config invalid: " << config_result.message);
++            send_alarm(ExecAlarm::SpindleControl);
++            return false;
++        }
++
++        if (!allow_zero && requested_tool == 0) {
++            return fail_validation("requested tool 0 is not valid for this operation");
++        }
++        if (requested_tool != 0 && !openatc_tool_is_pocket(requested_tool, _pocket_count)) {
++            return fail_validation("requested tool is outside configured pocket range");
++        }
++        if (gc_state.current_tool < 0) {
++            return fail_validation("current tool is unknown; declare state with M61 first");
++        }
++        if (gc_state.current_tool > static_cast<int32_t>(std::numeric_limits<tool_t>::max())) {
++            return fail_validation("current tool exceeds FluidNC tool number range");
++        }
++        if (gc_state.current_tool != 0 && !openatc_tool_is_pocket(static_cast<tool_t>(gc_state.current_tool), _pocket_count)) {
++            return fail_validation("current tool is outside configured pocket range");
++        }
++        if (gc_state.modal.plane_select != Plane::XY) {
++            return fail_validation("requires G17 XY plane");
++        }
++        if (!required_axes_homed()) {
++            return fail_validation("requires X/Y/Z homed before tool change");
++        }
++
++        OpenATCValidationResult bounds_result = openatc_validate_bounds(config_view(), machine_bounds());
++        if (!bounds_result.ok) {
++            log_error("OpenATC bounds invalid: " << bounds_result.message);
++            send_alarm(ExecAlarm::SpindleControl);
++            return false;
++        }
++
++        if (_load == nullptr || _unload == nullptr) {
++            return fail_validation("load and unload sections are required");
++        }
++        if (!validate_spindle_direction(*_load) || !validate_spindle_direction(*_unload)) {
++            return false;
++        }
++
++        return true;
++    }
++
++    bool OpenATC::check_sensor(InputPin& pin, bool expected, const char* label) {
++        if (pin.undefined()) {
++            return true;
++        }
++
++        bool actual = pin.read();
++        if (actual == expected) {
++            return true;
++        }
++
++        log_error("OpenATC sensor mismatch: " << label);
++        send_alarm(ExecAlarm::SpindleControl);
++        return false;
++    }
++
++    bool OpenATC::check_initial_sensors(tool_t requested_tool) {
++        if (gc_state.current_tool == 0 && requested_tool != 0) {
++            return check_sensor(_tool_in_spindle_pin, false, "tool_in_spindle before load") &&
++                   check_sensor(_collet_clear_pin, true, "collet_clear before load");
++        }
++
++        if (gc_state.current_tool != 0) {
++            return check_sensor(_tool_in_spindle_pin, true, "tool_in_spindle before unload");
++        }
++
++        return true;
++    }
++
++    void OpenATC::init() {
++        log_info("ATC:" << name());
++        configure_sensor(_tool_in_spindle_pin);
++        configure_sensor(_pocket_tool_present_pin);
++        configure_sensor(_collet_clear_pin);
++    }
++
++    void OpenATC::probe_notification() {}
++
++    bool OpenATC::tool_change(tool_t value, bool pre_select, bool set_tool) {
++        if (pre_select) {
++            return true;
++        }
++
++        protocol_buffer_synchronize();
++
++        if (set_tool) {
++            if (value != 0 && !openatc_tool_is_pocket(value, _pocket_count)) {
++                return fail_validation("M61 tool is outside configured pocket range");
++            }
++            _have_reference_probe = false;
++            return true;
++        }
++
++        if (value == 0) {
++            if (gc_state.current_tool < 0) {
++                return fail_validation("current tool is unknown; declare state with M61 first");
++            }
++
++            if (gc_state.current_tool != 0 && !validate_runtime(value, true)) {
++                return false;
++            }
++            if (!check_initial_sensors(value)) {
++                return false;
++            }
++
++            OpenATCChangePlan plan = openatc_build_change_plan(static_cast<tool_t>(gc_state.current_tool), value, _have_reference_probe);
++            if (!openatc_plan_requires_macro(plan)) {
++                return true;
++            }
++
++            bool was_inch_mode = gc_state.modal.units == Units::Inches;
++            Job::save();
++            Job::nest(new OpenATCJobChannel(this,
++                                            plan,
++                                            _parsed_magazine_axis,
++                                            static_cast<tool_t>(gc_state.current_tool),
++                                            value,
++                                            was_inch_mode),
++                      nullptr);
++            return true;
++        }
++
++        if (gc_state.current_tool == static_cast<int32_t>(value)) {
++            return true;
++        }
++
++        if (!validate_runtime(value, false)) {
++            return false;
++        }
++        if (!check_initial_sensors(value)) {
++            return false;
++        }
++
++        OpenATCChangePlan plan = openatc_build_change_plan(static_cast<tool_t>(gc_state.current_tool), value, _have_reference_probe);
++        bool was_inch_mode = gc_state.modal.units == Units::Inches;
++        Job::save();
++        Job::nest(new OpenATCJobChannel(this,
++                                        plan,
++                                        _parsed_magazine_axis,
++                                        static_cast<tool_t>(gc_state.current_tool),
++                                        value,
++                                        was_inch_mode),
++                  nullptr);
++        return true;
++    }
++
++    void OpenATC::configure_sensor(InputPin& pin) {
++        if (!pin.undefined()) {
++            pin.init();
++        }
++    }
++
++    void OpenATC::finish_tool_change(tool_t tool, bool have_reference_probe) {
++        _have_reference_probe = have_reference_probe;
++        set_current_tool(tool);
++        report_ovr_counter = 0;
++        gc_ovr_changed();
++    }
++
++    void OpenATC::fail_tool_change(const char* message) {
++        log_error("OpenATC " << message);
++        send_alarm(ExecAlarm::SpindleControl);
++    }
++
++    OpenATCSensorSnapshot OpenATC::sensor_snapshot() const {
++        OpenATCSensorSnapshot snapshot;
++        snapshot.tool_in_spindle_defined = !_tool_in_spindle_pin.undefined();
++        snapshot.tool_in_spindle = snapshot.tool_in_spindle_defined && _tool_in_spindle_pin.read();
++        snapshot.pocket_tool_present_defined = !_pocket_tool_present_pin.undefined();
++        snapshot.pocket_tool_present = snapshot.pocket_tool_present_defined && _pocket_tool_present_pin.read();
++        snapshot.collet_clear_defined = !_collet_clear_pin.undefined();
++        snapshot.collet_clear = snapshot.collet_clear_defined && _collet_clear_pin.read();
++        return snapshot;
++    }
++
++    void OpenATC::set_current_tool(tool_t tool) {
++        gc_state.current_tool  = tool;
++        gc_state.selected_tool = tool;
++    }
++
++    namespace {
++        ATCFactory::InstanceBuilder<OpenATC> registration("openatc");
++    }
++}
+diff --git a/FluidNC/src/ToolChangers/atc_openatc.h b/FluidNC/src/ToolChangers/atc_openatc.h
+new file mode 100644
+index 0000000..be56f4a
+--- /dev/null
++++ b/FluidNC/src/ToolChangers/atc_openatc.h
+@@ -0,0 +1,112 @@
++// Copyright (c) 2026
++// Use of this source code is governed by a GPLv3 license that can be found in the LICENSE file.
++//
++// Native FluidNC ATC for a linear bed-mounted OpenATC magazine.
++
++#pragma once
++
++#include "Config.h"
++
++#include "Configuration/Configurable.h"
++#include "Machine/InputPin.h"
++#include "atc.h"
++#include "atc_openatc_model.h"
++
++#include <string>
++#include <vector>
++
++namespace ATCs {
++    class OpenATCJobChannel;
++
++    class OpenATCActionSection : public Configuration::Configurable {
++    public:
++        std::string             direction_name   = "cw";
++        uint32_t                spindle_rpm      = 0;
++        uint32_t                spin_ms          = 0;
++        OpenATCSpindleDirection parsed_direction = OpenATCSpindleDirection::CW;
++
++        void validate() override;
++        void afterParse() override;
++        void group(Configuration::HandlerBase& handler) override;
++
++        virtual OpenATCActionConfig view() const;
++    };
++
++    class OpenATCLoadActionSection : public OpenATCActionSection {
++    public:
++        uint32_t passes                    = 1;
++        float    retract_between_passes_mm = 0.0f;
++
++        void group(Configuration::HandlerBase& handler) override;
++        OpenATCActionConfig view() const override;
++    };
++
++    class OpenATC : public ATC {
++    public:
++        OpenATC(const char* name) : ATC(name) {}
++
++        OpenATC(const OpenATC&)            = delete;
++        OpenATC(OpenATC&&)                 = delete;
++        OpenATC& operator=(const OpenATC&) = delete;
++        OpenATC& operator=(OpenATC&&)      = delete;
++
++        ~OpenATC() override;
++
++        void init() override;
++        void probe_notification() override;
++        bool tool_change(tool_t value, bool pre_select, bool set_tool) override;
++        void validate() override;
++        void afterParse() override;
++        void group(Configuration::HandlerBase& handler) override;
++
++    private:
++        std::string        _layout               = "linear";
++        std::string        _magazine_axis        = "x";
++        axis_t             _parsed_magazine_axis = X_AXIS;
++        uint32_t           _pocket_count         = 0;
++        std::vector<float> _first_pocket_mpos_mm = { 0.0f, 0.0f };
++        float              _pocket_pitch_mm      = 0.0f;
++
++        float _safe_z_mpos_mm          = 0.0f;
++        float _engage_z_mpos_mm        = 0.0f;
++        float _travel_feed_mm_per_min  = 0.0f;
++        float _engage_feed_mm_per_min  = 0.0f;
++        float _retract_feed_mm_per_min = 0.0f;
++
++        OpenATCLoadActionSection* _load   = nullptr;
++        OpenATCActionSection*     _unload = nullptr;
++
++        std::vector<float> _toolsetter_mpos_mm         = { 0.0f, 0.0f, 0.0f };
++        float              _toolsetter_rapid_z_mpos_mm = 0.0f;
++        float              _probe_seek_rate_mm_per_min = 0.0f;
++        float              _probe_feed_rate_mm_per_min = 0.0f;
++        float              _probe_retract_mm           = 0.0f;
++
++        InputPin _tool_in_spindle_pin { "tool_in_spindle_pin" };
++        InputPin _pocket_tool_present_pin { "pocket_tool_present_pin" };
++        InputPin _collet_clear_pin { "collet_clear_pin" };
++
++        bool _have_reference_probe = false;
++
++        OpenATCActionConfig _load_view;
++        OpenATCActionConfig _unload_view;
++
++        void                refresh_action_views();
++        OpenATCConfigView   config_view() const;
++        OpenATCBounds       machine_bounds() const;
++        bool                required_axes_homed() const;
++        bool                validate_runtime(tool_t requested_tool, bool allow_zero);
++        bool                validate_spindle_direction(OpenATCActionSection const& action);
++        bool                check_sensor(InputPin& pin, bool expected, const char* label);
++        bool                check_initial_sensors(tool_t requested_tool);
++        bool                fail_validation(const char* message);
++        void                configure_sensor(InputPin& pin);
++        void                finish_tool_change(tool_t tool, bool have_reference_probe);
++        void                fail_tool_change(const char* message);
++        OpenATCSensorSnapshot sensor_snapshot() const;
++        void                set_current_tool(tool_t tool);
++
++        friend class OpenATCJobChannel;
++    };
++
++}
+diff --git a/FluidNC/src/ToolChangers/atc_openatc_job.h b/FluidNC/src/ToolChangers/atc_openatc_job.h
+new file mode 100644
+index 0000000..131d6c5
+--- /dev/null
++++ b/FluidNC/src/ToolChangers/atc_openatc_job.h
+@@ -0,0 +1,327 @@
++// Copyright (c) 2026
++// Use of this source code is governed by a GPLv3 license that can be found in the LICENSE file.
++//
++// OpenATC phase sequencer shared by the native FluidNC channel and unit tests.
++
++#pragma once
++
++#include "Error.h"
++#include "Types.h"
++#include "atc_openatc_model.h"
++
++#include <cstdarg>
++#include <cstdio>
++#include <cstring>
++#include <limits>
++#include <string>
++#include <vector>
++
++namespace ATCs {
++    static constexpr size_t OpenATCNoLineIndex = std::numeric_limits<size_t>::max();
++
++    struct OpenATCLineSink {
++        std::vector<std::string> lines;
++
++        void addf(const char* format, ...) {
++            char    buffer[160];
++            va_list args;
++            va_start(args, format);
++            std::vsnprintf(buffer, sizeof(buffer), format, args);
++            va_end(args);
++            lines.emplace_back(buffer);
++        }
++    };
++
++    template <typename Owner>
++    class OpenATCJobSequencer {
++    public:
++        OpenATCJobSequencer(Owner* owner,
++                            OpenATCChangePlan const& plan,
++                            axis_t magazine_axis,
++                            tool_t starting_tool,
++                            tool_t requested_tool,
++                            bool was_inch_mode)
++            : _owner(owner),
++              _plan(plan),
++              _magazine_axis(magazine_axis),
++              _starting_tool(starting_tool),
++              _requested_tool(requested_tool),
++              _was_inch_mode(was_inch_mode) {
++            queue_current_phase();
++        }
++
++        Error pollLine(char* line, size_t max_line, size_t& line_number) {
++            if (line == nullptr || max_line == 0) {
++                return Error::NoData;
++            }
++            if (_failed) {
++                return Error::GcodeValueWordInvalid;
++            }
++
++            while (_line_index >= _lines.size()) {
++                if (_step_index >= _plan.count) {
++                    finish_success_once();
++                    return Error::Eof;
++                }
++                queue_current_phase();
++                if (_lines.empty()) {
++                    ++_step_index;
++                }
++            }
++
++            std::string const& next = _lines[_line_index++];
++            if (next.size() >= max_line) {
++                if (_was_inch_mode && !_units_restored) {
++                    queue_unit_restore_before_failure("generated line is too long");
++                    return Error::NoData;
++                }
++                fail_job_now("generated line is too long");
++                return Error::LineLengthExceeded;
++            }
++
++            std::strncpy(line, next.c_str(), max_line);
++            line[max_line - 1] = '\0';
++            ++line_number;
++            return Error::Ok;
++        }
++
++        void ack(Error status) {
++            size_t acknowledged_index = _line_index == 0 ? OpenATCNoLineIndex : _line_index - 1;
++            if (status != Error::Ok) {
++                if (_unit_restore_line_index != OpenATCNoLineIndex && acknowledged_index == _unit_restore_line_index) {
++                    fail_job_now("unit restore failed");
++                    return;
++                }
++                fail_job("generated line failed");
++                return;
++            }
++
++            if (_unit_restore_line_index != OpenATCNoLineIndex && acknowledged_index == _unit_restore_line_index) {
++                _units_restored = true;
++                _unit_restore_line_index = OpenATCNoLineIndex;
++            }
++
++            if (!phase_complete_after_ack()) {
++                return;
++            }
++
++            if (_pending_failure != nullptr) {
++                fail_job_now(_pending_failure);
++                return;
++            }
++
++            OpenATCPlanStep completed = _plan.steps[_step_index];
++            if (completed == OpenATCPlanStep::UnloadCurrent && !check_after_unload_or_queue_retry()) {
++                return;
++            }
++            if (completed == OpenATCPlanStep::LoadRequested && !check_after_load()) {
++                return;
++            }
++
++            ++_step_index;
++            _lines.clear();
++            _line_index = 0;
++        }
++
++    private:
++        Owner*                  _owner = nullptr;
++        OpenATCChangePlan       _plan;
++        axis_t                  _magazine_axis = X_AXIS;
++        tool_t                  _starting_tool = 0;
++        tool_t                  _requested_tool = 0;
++        size_t                  _step_index = 0;
++        size_t                  _line_index = 0;
++        bool                    _unload_retry_used = false;
++        bool                    _failed = false;
++        bool                    _finished = false;
++        bool                    _was_inch_mode = false;
++        bool                    _units_restored = false;
++        size_t                  _unit_restore_line_index = OpenATCNoLineIndex;
++        const char*             _pending_failure = nullptr;
++        std::vector<std::string> _lines;
++
++        void queue_current_phase() {
++            _lines.clear();
++            _line_index = 0;
++            _unit_restore_line_index = OpenATCNoLineIndex;
++
++            if (_step_index >= _plan.count || _owner == nullptr) {
++                return;
++            }
++
++            OpenATCLineSink sink;
++            OpenATCConfigView cfg = _owner->openatc_config_view();
++            switch (_plan.steps[_step_index]) {
++                case OpenATCPlanStep::ProbeReference:
++                    openatc_add_reference_probe(sink, cfg);
++                    break;
++                case OpenATCPlanStep::UnloadCurrent:
++                    openatc_add_unload(sink, cfg, _magazine_axis, _starting_tool);
++                    break;
++                case OpenATCPlanStep::LoadRequested:
++                    openatc_add_load(sink, cfg, _magazine_axis, _requested_tool);
++                    break;
++                case OpenATCPlanStep::ProbeRequestedAndApplyTlo:
++                    openatc_add_tool_probe_and_tlo(sink, cfg);
++                    break;
++                case OpenATCPlanStep::ClearTlo:
++                    openatc_add_clear_tlo(sink);
++                    break;
++            }
++
++            if (_step_index == 0 && _was_inch_mode) {
++                sink.lines.insert(sink.lines.begin(), "G21");
++            }
++            if ((_step_index + 1) >= _plan.count && _was_inch_mode) {
++                _unit_restore_line_index = sink.lines.size();
++                sink.addf("G20");
++            }
++            _lines.swap(sink.lines);
++        }
++
++        bool phase_complete_after_ack() const { return _line_index >= _lines.size(); }
++
++        void replace_with_retry_phase() {
++            OpenATCLineSink retry;
++            openatc_add_failed_unload_retry(retry, _owner->openatc_config_view());
++            _lines.swap(retry.lines);
++            _line_index = 0;
++        }
++
++        bool check_after_unload_or_queue_retry() {
++            OpenATCSensorDecision decision = openatc_decide_after_unload(_owner->openatc_sensor_snapshot(), !_unload_retry_used);
++            if (decision == OpenATCSensorDecision::Pass) {
++                return true;
++            }
++            if (decision == OpenATCSensorDecision::RetryUnload) {
++                _unload_retry_used = true;
++                replace_with_retry_phase();
++                return false;
++            }
++            fail_job("failed unload sensor check");
++            return false;
++        }
++
++        bool check_after_load() {
++            if (openatc_decide_after_load(_owner->openatc_sensor_snapshot())) {
++                return true;
++            }
++            fail_job("failed load sensor check");
++            return false;
++        }
++
++        void finish_success_once() {
++            if (_finished || _owner == nullptr) {
++                return;
++            }
++            _finished = true;
++            _owner->openatc_finish_tool_change(_requested_tool, _plan.reference_after);
++        }
++
++        void fail_job_now(const char* message) {
++            if (_failed) {
++                return;
++            }
++            _failed = true;
++            if (_owner != nullptr) {
++                _owner->openatc_fail_tool_change(message);
++            }
++        }
++
++        void queue_unit_restore_before_failure(const char* message) {
++            _pending_failure = message;
++            _lines.clear();
++            _lines.emplace_back("G20");
++            _line_index = 0;
++            _unit_restore_line_index = 0;
++        }
++
++        void fail_job(const char* message) {
++            if (_was_inch_mode && !_units_restored) {
++                queue_unit_restore_before_failure(message);
++                return;
++            }
++            fail_job_now(message);
++        }
++    };
++
++#ifdef UNIT_TEST
++    struct OpenATCJobTestResult {
++        std::vector<std::string> emitted_lines;
++        bool                     finished = false;
++        tool_t                   finished_tool = 0;
++        bool                     have_reference_probe = false;
++        bool                     failed = false;
++        size_t                   failure_count = 0;
++    };
++
++    struct OpenATCJobTestOwner {
++        OpenATCConfigView                  config;
++        std::vector<OpenATCSensorSnapshot> sensor_snapshots;
++        size_t                             sensor_index = 0;
++        bool                               finished = false;
++        tool_t                             finished_tool = 0;
++        bool                               have_reference_probe = false;
++        bool                               failed = false;
++        size_t                             failure_count = 0;
++
++        OpenATCConfigView openatc_config_view() const { return config; }
++
++        OpenATCSensorSnapshot openatc_sensor_snapshot() {
++            if (sensor_index >= sensor_snapshots.size()) {
++                return OpenATCSensorSnapshot {};
++            }
++            return sensor_snapshots[sensor_index++];
++        }
++
++        void openatc_finish_tool_change(tool_t tool, bool reference_probe) {
++            finished = true;
++            finished_tool = tool;
++            have_reference_probe = reference_probe;
++        }
++
++        void openatc_fail_tool_change(const char*) {
++            failed = true;
++            ++failure_count;
++        }
++    };
++
++    inline OpenATCJobTestResult openatc_run_job_channel_for_test(OpenATCConfigView const&                  cfg,
++                                                                 OpenATCChangePlan const&                  plan,
++                                                                 axis_t                                    magazine_axis,
++                                                                 tool_t                                    starting_tool,
++                                                                 tool_t                                    requested_tool,
++                                                                 bool                                      was_inch_mode,
++                                                                 std::vector<OpenATCSensorSnapshot> const& sensor_snapshots) {
++        OpenATCJobTestOwner owner { cfg, sensor_snapshots };
++        OpenATCJobSequencer<OpenATCJobTestOwner> sequencer(&owner, plan, magazine_axis, starting_tool, requested_tool, was_inch_mode);
++        OpenATCJobTestResult result;
++        char                 line[255];
++        size_t               line_number = 0;
++
++        for (size_t guard = 0; guard < 512 && !owner.failed; ++guard) {
++            Error poll_status = sequencer.pollLine(line, sizeof(line), line_number);
++            if (poll_status == Error::NoData) {
++                continue;
++            }
++            if (poll_status == Error::Eof) {
++                break;
++            }
++            if (poll_status != Error::Ok) {
++                owner.openatc_fail_tool_change("poll failed");
++                break;
++            }
++
++            result.emitted_lines.emplace_back(line);
++            sequencer.ack(Error::Ok);
++        }
++
++        result.finished             = owner.finished;
++        result.finished_tool        = owner.finished_tool;
++        result.have_reference_probe = owner.have_reference_probe;
++        result.failed               = owner.failed;
++        result.failure_count        = owner.failure_count;
++        return result;
++    }
++#endif
++}
+diff --git a/FluidNC/src/ToolChangers/atc_openatc_model.h b/FluidNC/src/ToolChangers/atc_openatc_model.h
+new file mode 100644
+index 0000000..48414c2
+--- /dev/null
++++ b/FluidNC/src/ToolChangers/atc_openatc_model.h
+@@ -0,0 +1,501 @@
++// Copyright (c) 2026
++// Use of this source code is governed by a GPLv3 license that can be found in the LICENSE file.
++//
++// Pure OpenATC geometry and validation helpers for a linear bed-mounted magazine.
++
++#pragma once
++
++#include "Config.h"
++
++#include <array>
++#include <cstdint>
++#include <cstring>
++#include <limits>
++#include <string_view>
++#include <vector>
++
++namespace ATCs {
++    enum class OpenATCSpindleDirection : uint8_t {
++        CW,
++        CCW,
++    };
++
++    struct OpenATCActionConfig {
++        OpenATCSpindleDirection direction                 = OpenATCSpindleDirection::CW;
++        uint32_t                spindle_rpm               = 0;
++        uint32_t                spin_ms                   = 0;
++        uint32_t                passes                    = 1;
++        float                   retract_between_passes_mm = 0.0f;
++    };
++
++    struct OpenATCConfigView {
++        std::string_view           layout;
++        std::string_view           magazine_axis_name;
++        uint32_t                   pocket_count               = 0;
++        std::vector<float> const*  first_pocket_mpos_mm       = nullptr;
++        float                      pocket_pitch_mm            = 0.0f;
++        float                      safe_z_mpos_mm             = 0.0f;
++        float                      engage_z_mpos_mm           = 0.0f;
++        float                      travel_feed_mm_per_min     = 0.0f;
++        float                      engage_feed_mm_per_min     = 0.0f;
++        float                      retract_feed_mm_per_min    = 0.0f;
++        OpenATCActionConfig const* load                       = nullptr;
++        OpenATCActionConfig const* unload                     = nullptr;
++        std::vector<float> const*  toolsetter_mpos_mm         = nullptr;
++        float                      toolsetter_rapid_z_mpos_mm = 0.0f;
++        float                      probe_seek_rate_mm_per_min = 0.0f;
++        float                      probe_feed_rate_mm_per_min = 0.0f;
++        float                      probe_retract_mm           = 0.0f;
++    };
++
++    struct OpenATCXY {
++        float x = 0.0f;
++        float y = 0.0f;
++    };
++
++    struct OpenATCValidationResult {
++        bool        ok      = true;
++        const char* message = "";
++    };
++
++    struct OpenATCBounds {
++        float min[MAX_N_AXIS]   = {};
++        float max[MAX_N_AXIS]   = {};
++        bool  valid[MAX_N_AXIS] = {};
++    };
++
++    enum class OpenATCPlanStep : uint8_t {
++        UnloadCurrent,
++        LoadRequested,
++        ProbeReference,
++        ProbeRequestedAndApplyTlo,
++        ClearTlo,
++    };
++
++    struct OpenATCChangePlan {
++        std::array<OpenATCPlanStep, 5> steps {};
++        size_t                         count           = 0;
++        bool                           reference_after = false;
++    };
++
++    enum class OpenATCSensorDecision : uint8_t {
++        Pass,
++        RetryUnload,
++        Fail,
++    };
++
++    struct OpenATCSensorSnapshot {
++        bool tool_in_spindle_defined     = false;
++        bool tool_in_spindle             = false;
++        bool pocket_tool_present_defined = false;
++        bool pocket_tool_present         = false;
++        bool collet_clear_defined        = false;
++        bool collet_clear                = false;
++    };
++
++    inline bool openatc_equals_ci(std::string_view lhs, const char* rhs) {
++        if (rhs == nullptr || lhs.size() != std::strlen(rhs)) {
++            return false;
++        }
++
++        for (size_t i = 0; i < lhs.size(); ++i) {
++            char a = lhs[i];
++            char b = rhs[i];
++
++            if (a >= 'A' && a <= 'Z') {
++                a = char(a - 'A' + 'a');
++            }
++            if (b >= 'A' && b <= 'Z') {
++                b = char(b - 'A' + 'a');
++            }
++            if (a != b) {
++                return false;
++            }
++        }
++
++        return true;
++    }
++
++    inline bool openatc_parse_magazine_axis(std::string_view value, axis_t& axis) {
++        if (openatc_equals_ci(value, "x")) {
++            axis = X_AXIS;
++            return true;
++        }
++        if (openatc_equals_ci(value, "y")) {
++            axis = Y_AXIS;
++            return true;
++        }
++        return false;
++    }
++
++    inline bool openatc_parse_spindle_direction(std::string_view value, OpenATCSpindleDirection& direction) {
++        if (openatc_equals_ci(value, "cw")) {
++            direction = OpenATCSpindleDirection::CW;
++            return true;
++        }
++        if (openatc_equals_ci(value, "ccw")) {
++            direction = OpenATCSpindleDirection::CCW;
++            return true;
++        }
++        return false;
++    }
++
++    inline bool openatc_tool_is_pocket(tool_t tool, uint32_t pocket_count) {
++        return tool >= 1 && static_cast<uint32_t>(tool) <= pocket_count;
++    }
++
++    inline uint32_t openatc_pocket_index(tool_t tool) {
++        return static_cast<uint32_t>(tool) - 1;
++    }
++
++    inline OpenATCXY openatc_pocket_position(axis_t                    magazine_axis,
++                                             std::vector<float> const& first_pocket_mpos_mm,
++                                             float                     pocket_pitch_mm,
++                                             tool_t                    tool) {
++        OpenATCXY position { first_pocket_mpos_mm[0], first_pocket_mpos_mm[1] };
++        float     offset = pocket_pitch_mm * static_cast<float>(openatc_pocket_index(tool));
++
++        if (magazine_axis == X_AXIS) {
++            position.x += offset;
++        } else {
++            position.y += offset;
++        }
++
++        return position;
++    }
++
++    inline bool openatc_value_in_bounds(float value, float min_value, float max_value) {
++        return value >= min_value && value <= max_value;
++    }
++
++    inline bool openatc_xy_in_bounds(OpenATCXY position, OpenATCBounds const& bounds) {
++        return bounds.valid[X_AXIS] && bounds.valid[Y_AXIS] &&
++               openatc_value_in_bounds(position.x, bounds.min[X_AXIS], bounds.max[X_AXIS]) &&
++               openatc_value_in_bounds(position.y, bounds.min[Y_AXIS], bounds.max[Y_AXIS]);
++    }
++
++    inline bool openatc_z_in_bounds(float z, OpenATCBounds const& bounds) {
++        return bounds.valid[Z_AXIS] && openatc_value_in_bounds(z, bounds.min[Z_AXIS], bounds.max[Z_AXIS]);
++    }
++
++    inline void openatc_plan_add_step(OpenATCChangePlan& plan, OpenATCPlanStep step) {
++        plan.steps[plan.count++] = step;
++    }
++
++    inline OpenATCChangePlan openatc_build_change_plan(tool_t current_tool, tool_t requested_tool, bool have_reference_probe) {
++        OpenATCChangePlan plan;
++        plan.reference_after = have_reference_probe;
++
++        if (current_tool == requested_tool) {
++            return plan;
++        }
++
++        if (requested_tool == 0) {
++            if (current_tool != 0) {
++                openatc_plan_add_step(plan, OpenATCPlanStep::UnloadCurrent);
++            }
++            openatc_plan_add_step(plan, OpenATCPlanStep::ClearTlo);
++            plan.reference_after = false;
++            return plan;
++        }
++
++        if (current_tool != 0 && !plan.reference_after) {
++            openatc_plan_add_step(plan, OpenATCPlanStep::ProbeReference);
++            plan.reference_after = true;
++        }
++
++        if (current_tool != 0) {
++            openatc_plan_add_step(plan, OpenATCPlanStep::UnloadCurrent);
++        }
++
++        openatc_plan_add_step(plan, OpenATCPlanStep::LoadRequested);
++
++        if (plan.reference_after) {
++            openatc_plan_add_step(plan, OpenATCPlanStep::ProbeRequestedAndApplyTlo);
++        } else {
++            openatc_plan_add_step(plan, OpenATCPlanStep::ProbeReference);
++            plan.reference_after = true;
++        }
++
++        return plan;
++    }
++
++    inline bool openatc_plan_requires_macro(OpenATCChangePlan const& plan) {
++        return plan.count != 0;
++    }
++
++    template <typename Sink>
++    inline void openatc_add_stop_spindle(Sink& sink) {
++        sink.addf("M5");
++    }
++
++    template <typename Sink>
++    inline void openatc_add_move_safe_z(Sink& sink, OpenATCConfigView const& cfg) {
++        sink.addf("G53G0Z%0.3f", cfg.safe_z_mpos_mm);
++    }
++
++    template <typename Sink>
++    inline void openatc_add_move_xy(Sink& sink, OpenATCXY xy, OpenATCConfigView const& cfg) {
++        sink.addf("G53G1X%0.3fY%0.3fF%0.3f", xy.x, xy.y, cfg.travel_feed_mm_per_min);
++    }
++
++    template <typename Sink>
++    inline void openatc_add_move_engage_z(Sink& sink, OpenATCConfigView const& cfg) {
++        sink.addf("G53G1Z%0.3fF%0.3f", cfg.engage_z_mpos_mm, cfg.engage_feed_mm_per_min);
++    }
++
++    inline float openatc_retract_z_from_engage(OpenATCConfigView const& cfg, float retract_mm) {
++        float retract_z = cfg.engage_z_mpos_mm + retract_mm;
++        if (retract_z > cfg.safe_z_mpos_mm) {
++            retract_z = cfg.safe_z_mpos_mm;
++        }
++        return retract_z;
++    }
++
++    template <typename Sink>
++    inline void openatc_add_retract_from_engage(Sink& sink, OpenATCConfigView const& cfg, float retract_mm) {
++        if (retract_mm <= 0.0f) {
++            return;
++        }
++        sink.addf("G53G1Z%0.3fF%0.3f", openatc_retract_z_from_engage(cfg, retract_mm), cfg.retract_feed_mm_per_min);
++    }
++
++    template <typename Sink>
++    inline void openatc_add_action_pass(Sink& sink, OpenATCActionConfig const& action, OpenATCConfigView const& cfg) {
++        const char* mcode = action.direction == OpenATCSpindleDirection::CW ? "M3" : "M4";
++        sink.addf("%sS%u", mcode, action.spindle_rpm);
++        openatc_add_move_engage_z(sink, cfg);
++        sink.addf("G4P%0.3f", static_cast<float>(action.spin_ms) / 1000.0f);
++        sink.addf("M5");
++    }
++
++    template <typename Sink>
++    inline void openatc_add_action(Sink& sink, OpenATCActionConfig const& action, OpenATCConfigView const& cfg) {
++        for (uint32_t pass = 0; pass < action.passes; ++pass) {
++            openatc_add_action_pass(sink, action, cfg);
++
++            if ((pass + 1) < action.passes && action.retract_between_passes_mm > 0.0f) {
++                openatc_add_retract_from_engage(sink, cfg, action.retract_between_passes_mm);
++            }
++        }
++    }
++
++    template <typename Sink>
++    inline void openatc_add_failed_unload_retry(Sink& sink, OpenATCConfigView const& cfg) {
++        float retry_retract_mm = cfg.load == nullptr ? 0.0f : cfg.load->retract_between_passes_mm;
++        openatc_add_retract_from_engage(sink, cfg, retry_retract_mm);
++        openatc_add_action_pass(sink, *cfg.unload, cfg);
++        openatc_add_move_safe_z(sink, cfg);
++    }
++
++    template <typename Sink>
++    inline void openatc_add_unload(Sink& sink, OpenATCConfigView const& cfg, axis_t magazine_axis, tool_t tool) {
++        OpenATCXY pocket = openatc_pocket_position(magazine_axis, *cfg.first_pocket_mpos_mm, cfg.pocket_pitch_mm, tool);
++
++        openatc_add_stop_spindle(sink);
++        openatc_add_move_safe_z(sink, cfg);
++        openatc_add_move_xy(sink, pocket, cfg);
++        openatc_add_action_pass(sink, *cfg.unload, cfg);
++        openatc_add_move_safe_z(sink, cfg);
++    }
++
++    template <typename Sink>
++    inline void openatc_add_load(Sink& sink, OpenATCConfigView const& cfg, axis_t magazine_axis, tool_t tool) {
++        OpenATCXY pocket = openatc_pocket_position(magazine_axis, *cfg.first_pocket_mpos_mm, cfg.pocket_pitch_mm, tool);
++
++        openatc_add_stop_spindle(sink);
++        openatc_add_move_safe_z(sink, cfg);
++        openatc_add_move_xy(sink, pocket, cfg);
++        openatc_add_action(sink, *cfg.load, cfg);
++        openatc_add_move_safe_z(sink, cfg);
++    }
++
++    template <typename Sink>
++    inline void openatc_add_probe_cycle(Sink& sink, OpenATCConfigView const& cfg) {
++        openatc_add_move_safe_z(sink, cfg);
++        sink.addf("G53G1X%0.3fY%0.3fF%0.3f", (*cfg.toolsetter_mpos_mm)[0], (*cfg.toolsetter_mpos_mm)[1],
++                  cfg.travel_feed_mm_per_min);
++        sink.addf("G53G0Z%0.3f", cfg.toolsetter_rapid_z_mpos_mm);
++
++        if (cfg.probe_seek_rate_mm_per_min > cfg.probe_feed_rate_mm_per_min) {
++            sink.addf("G53G38.2Z%0.3fF%0.3f", (*cfg.toolsetter_mpos_mm)[2], cfg.probe_seek_rate_mm_per_min);
++            sink.addf("G53G0Z[#<_abs_z>+%0.3f]", cfg.probe_retract_mm);
++        }
++
++        sink.addf("G53G38.2Z%0.3fF%0.3f", (*cfg.toolsetter_mpos_mm)[2], cfg.probe_feed_rate_mm_per_min);
++    }
++
++    template <typename Sink>
++    inline void openatc_add_reference_probe(Sink& sink, OpenATCConfigView const& cfg) {
++        openatc_add_probe_cycle(sink, cfg);
++        sink.addf("#<_openatc_reference_z>=[#5063]");
++        sink.addf("G43.1Z0");
++        openatc_add_move_safe_z(sink, cfg);
++    }
++
++    template <typename Sink>
++    inline void openatc_add_tool_probe_and_tlo(Sink& sink, OpenATCConfigView const& cfg) {
++        openatc_add_probe_cycle(sink, cfg);
++        sink.addf("#<_openatc_tlo_z>=[#5063-#<_openatc_reference_z>]");
++        sink.addf("G43.1Z#<_openatc_tlo_z>");
++        openatc_add_move_safe_z(sink, cfg);
++    }
++
++    template <typename Sink>
++    inline void openatc_add_clear_tlo(Sink& sink) {
++        sink.addf("G49");
++        sink.addf("(MSG: OpenATC TLO cleared)");
++    }
++
++    template <typename Sink>
++    inline void openatc_emit_change_plan(Sink&                    sink,
++                                         OpenATCConfigView const& cfg,
++                                         axis_t                   magazine_axis,
++                                         OpenATCChangePlan const& plan,
++                                         tool_t                   current_tool,
++                                         tool_t                   requested_tool) {
++        for (size_t index = 0; index < plan.count; ++index) {
++            switch (plan.steps[index]) {
++                case OpenATCPlanStep::ProbeReference:
++                    openatc_add_reference_probe(sink, cfg);
++                    break;
++                case OpenATCPlanStep::UnloadCurrent:
++                    openatc_add_unload(sink, cfg, magazine_axis, current_tool);
++                    break;
++                case OpenATCPlanStep::LoadRequested:
++                    openatc_add_load(sink, cfg, magazine_axis, requested_tool);
++                    break;
++                case OpenATCPlanStep::ProbeRequestedAndApplyTlo:
++                    openatc_add_tool_probe_and_tlo(sink, cfg);
++                    break;
++                case OpenATCPlanStep::ClearTlo:
++                    openatc_add_clear_tlo(sink);
++                    break;
++            }
++        }
++    }
++
++    inline OpenATCValidationResult openatc_validate_action(OpenATCActionConfig const* action, const char* missing_message) {
++        if (action == nullptr) {
++            return { false, missing_message };
++        }
++        if (action->spindle_rpm == 0) {
++            return { false, "spindle_rpm must be greater than 0" };
++        }
++        if (action->spin_ms == 0) {
++            return { false, "spin_ms must be greater than 0" };
++        }
++        if (action->passes == 0) {
++            return { false, "passes must be greater than 0" };
++        }
++        if (action->retract_between_passes_mm < 0.0f) {
++            return { false, "retract_between_passes_mm must be non-negative" };
++        }
++
++        return {};
++    }
++
++    inline OpenATCValidationResult openatc_validate_config(OpenATCConfigView const& cfg) {
++        axis_t magazine_axis = INVALID_AXIS;
++
++        if (!openatc_equals_ci(cfg.layout, "linear")) {
++            return { false, "layout must be linear" };
++        }
++        if (!openatc_parse_magazine_axis(cfg.magazine_axis_name, magazine_axis)) {
++            return { false, "magazine_axis must be x or y" };
++        }
++        if (cfg.pocket_count == 0) {
++            return { false, "pocket_count must be greater than 0" };
++        }
++        if (cfg.pocket_count > static_cast<uint32_t>(std::numeric_limits<tool_t>::max())) {
++            return { false, "pocket_count exceeds FluidNC tool number range" };
++        }
++        if (cfg.first_pocket_mpos_mm == nullptr || cfg.first_pocket_mpos_mm->size() != 2) {
++            return { false, "first_pocket_mpos_mm must contain X and Y" };
++        }
++        if (cfg.pocket_pitch_mm <= 0.0f) {
++            return { false, "pocket_pitch_mm must be greater than 0" };
++        }
++        if (cfg.travel_feed_mm_per_min <= 0.0f || cfg.engage_feed_mm_per_min <= 0.0f || cfg.retract_feed_mm_per_min <= 0.0f) {
++            return { false, "feed rates must be greater than 0" };
++        }
++        if (cfg.toolsetter_mpos_mm == nullptr || cfg.toolsetter_mpos_mm->size() != 3) {
++            return { false, "toolsetter_mpos_mm must contain X, Y, and Z" };
++        }
++        if (cfg.probe_seek_rate_mm_per_min <= 0.0f || cfg.probe_feed_rate_mm_per_min <= 0.0f) {
++            return { false, "probe feed rates must be greater than 0" };
++        }
++        if (cfg.probe_retract_mm <= 0.0f) {
++            return { false, "probe_retract_mm must be greater than 0" };
++        }
++
++        OpenATCValidationResult load = openatc_validate_action(cfg.load, "load section is required");
++        if (!load.ok) {
++            return load;
++        }
++
++        OpenATCValidationResult unload = openatc_validate_action(cfg.unload, "unload section is required");
++        if (!unload.ok) {
++            return unload;
++        }
++
++        return {};
++    }
++
++    inline OpenATCValidationResult openatc_validate_bounds(OpenATCConfigView const& cfg, OpenATCBounds const& bounds) {
++        axis_t magazine_axis = INVALID_AXIS;
++        if (!openatc_parse_magazine_axis(cfg.magazine_axis_name, magazine_axis)) {
++            return { false, "magazine_axis must be x or y" };
++        }
++        if (!openatc_z_in_bounds(cfg.safe_z_mpos_mm, bounds) || !openatc_z_in_bounds(cfg.engage_z_mpos_mm, bounds) ||
++            !openatc_z_in_bounds(cfg.toolsetter_rapid_z_mpos_mm, bounds) || !openatc_z_in_bounds((*cfg.toolsetter_mpos_mm)[2], bounds)) {
++            return { false, "Z target is outside machine bounds" };
++        }
++
++        OpenATCXY toolsetter { (*cfg.toolsetter_mpos_mm)[0], (*cfg.toolsetter_mpos_mm)[1] };
++        if (!openatc_xy_in_bounds(toolsetter, bounds)) {
++            return { false, "toolsetter XY is outside machine bounds" };
++        }
++
++        for (uint32_t tool_number = 1; tool_number <= cfg.pocket_count; ++tool_number) {
++            OpenATCXY pocket = openatc_pocket_position(
++                magazine_axis, *cfg.first_pocket_mpos_mm, cfg.pocket_pitch_mm, static_cast<tool_t>(tool_number));
++            if (!openatc_xy_in_bounds(pocket, bounds)) {
++                return { false, "pocket target is outside machine bounds" };
++            }
++        }
++
++        return {};
++    }
++
++    inline OpenATCSensorDecision openatc_decide_after_unload(OpenATCSensorSnapshot const& sensors, bool retry_available) {
++        bool ok = true;
++        if (sensors.tool_in_spindle_defined) {
++            ok = ok && !sensors.tool_in_spindle;
++        }
++        if (sensors.pocket_tool_present_defined) {
++            ok = ok && sensors.pocket_tool_present;
++        }
++        if (sensors.collet_clear_defined) {
++            ok = ok && sensors.collet_clear;
++        }
++        if (ok) {
++            return OpenATCSensorDecision::Pass;
++        }
++        return retry_available ? OpenATCSensorDecision::RetryUnload : OpenATCSensorDecision::Fail;
++    }
++
++    inline bool openatc_decide_after_load(OpenATCSensorSnapshot const& sensors) {
++        bool ok = true;
++        if (sensors.tool_in_spindle_defined) {
++            ok = ok && sensors.tool_in_spindle;
++        }
++        if (sensors.pocket_tool_present_defined) {
++            ok = ok && !sensors.pocket_tool_present;
++        }
++        if (sensors.collet_clear_defined) {
++            ok = ok && sensors.collet_clear;
++        }
++        return ok;
++    }
++}
+-- 
+2.54.0

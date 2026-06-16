@@ -1,0 +1,105 @@
+From 1dd20860be6d2a32546f0cd4e66dda23856d9102 Mon Sep 17 00:00:00 2001
+From: OpenATC Maintainers <https://github.com/DarkSlaayer>
+Date: Tue, 16 Jun 2026 12:19:12 -0700
+Subject: [PATCH] Allow signed OpenATC pocket pitch
+
+---
+ FluidNC/src/ToolChangers/atc_openatc.cpp     |  2 +-
+ FluidNC/src/ToolChangers/atc_openatc_model.h |  4 +--
+ FluidNC/tests/test_unit/OpenATCModelTest.cpp | 26 ++++++++++++++++++++
+ example_configs/openatc_linear.yaml          |  1 +
+ 4 files changed, 30 insertions(+), 3 deletions(-)
+
+diff --git a/FluidNC/src/ToolChangers/atc_openatc.cpp b/FluidNC/src/ToolChangers/atc_openatc.cpp
+index e119fc1..bdac5d4 100644
+--- a/FluidNC/src/ToolChangers/atc_openatc.cpp
++++ b/FluidNC/src/ToolChangers/atc_openatc.cpp
+@@ -98,7 +98,7 @@ namespace ATCs {
+         handler.item("magazine_axis", _magazine_axis, 1, 8);
+         handler.item("pocket_count", _pocket_count, 1, 100);
+         handler.item("first_pocket_mpos_mm", _first_pocket_mpos_mm);
+-        handler.item("pocket_pitch_mm", _pocket_pitch_mm, 0.001f, 100000.0f);
++        handler.item("pocket_pitch_mm", _pocket_pitch_mm, -100000.0f, 100000.0f);
+ 
+         handler.item("safe_z_mpos_mm", _safe_z_mpos_mm);
+         handler.item("engage_z_mpos_mm", _engage_z_mpos_mm);
+diff --git a/FluidNC/src/ToolChangers/atc_openatc_model.h b/FluidNC/src/ToolChangers/atc_openatc_model.h
+index 48414c2..fcc3150 100644
+--- a/FluidNC/src/ToolChangers/atc_openatc_model.h
++++ b/FluidNC/src/ToolChangers/atc_openatc_model.h
+@@ -413,8 +413,8 @@ namespace ATCs {
+         if (cfg.first_pocket_mpos_mm == nullptr || cfg.first_pocket_mpos_mm->size() != 2) {
+             return { false, "first_pocket_mpos_mm must contain X and Y" };
+         }
+-        if (cfg.pocket_pitch_mm <= 0.0f) {
+-            return { false, "pocket_pitch_mm must be greater than 0" };
++        if (cfg.pocket_pitch_mm == 0.0f) {
++            return { false, "pocket_pitch_mm must be non-zero" };
+         }
+         if (cfg.travel_feed_mm_per_min <= 0.0f || cfg.engage_feed_mm_per_min <= 0.0f || cfg.retract_feed_mm_per_min <= 0.0f) {
+             return { false, "feed rates must be greater than 0" };
+diff --git a/FluidNC/tests/test_unit/OpenATCModelTest.cpp b/FluidNC/tests/test_unit/OpenATCModelTest.cpp
+index 1be9b23..41eed18 100644
+--- a/FluidNC/tests/test_unit/OpenATCModelTest.cpp
++++ b/FluidNC/tests/test_unit/OpenATCModelTest.cpp
+@@ -129,6 +129,16 @@ TEST(OpenATCModel, ComputesXPocketPositions) {
+     EXPECT_FLOAT_EQ(pocket3.y, -728.0f);
+ }
+ 
++TEST(OpenATCModel, ComputesNegativeXPocketPositions) {
++    std::vector<float> first { -204.0f, -728.0f };
++    OpenATCXY          pocket1 = openatc_pocket_position(X_AXIS, first, -38.0f, 1);
++    OpenATCXY          pocket3 = openatc_pocket_position(X_AXIS, first, -38.0f, 3);
++    EXPECT_FLOAT_EQ(pocket1.x, -204.0f);
++    EXPECT_FLOAT_EQ(pocket1.y, -728.0f);
++    EXPECT_FLOAT_EQ(pocket3.x, -280.0f);
++    EXPECT_FLOAT_EQ(pocket3.y, -728.0f);
++}
++
+ TEST(OpenATCModel, ComputesYPocketPositions) {
+     std::vector<float> first { -280.0f, -728.0f };
+     OpenATCXY          pocket1 = openatc_pocket_position(Y_AXIS, first, 38.0f, 1);
+@@ -139,6 +149,16 @@ TEST(OpenATCModel, ComputesYPocketPositions) {
+     EXPECT_FLOAT_EQ(pocket3.y, -652.0f);
+ }
+ 
++TEST(OpenATCModel, ComputesNegativeYPocketPositions) {
++    std::vector<float> first { -280.0f, -652.0f };
++    OpenATCXY          pocket1 = openatc_pocket_position(Y_AXIS, first, -38.0f, 1);
++    OpenATCXY          pocket3 = openatc_pocket_position(Y_AXIS, first, -38.0f, 3);
++    EXPECT_FLOAT_EQ(pocket1.x, -280.0f);
++    EXPECT_FLOAT_EQ(pocket1.y, -652.0f);
++    EXPECT_FLOAT_EQ(pocket3.x, -280.0f);
++    EXPECT_FLOAT_EQ(pocket3.y, -728.0f);
++}
++
+ TEST(OpenATCModel, ValidatesConfigShape) {
+     std::vector<float>   first { -280.0f, -728.0f };
+     std::vector<float>   toolsetter { -24.0f, -784.0f, -130.0f };
+@@ -160,6 +180,12 @@ TEST(OpenATCModel, ValidatesConfigShape) {
+     EXPECT_FALSE(openatc_validate_config(cfg).ok);
+     cfg.pocket_count = 4;
+ 
++    cfg.pocket_pitch_mm = 0.0f;
++    EXPECT_FALSE(openatc_validate_config(cfg).ok);
++    cfg.pocket_pitch_mm = -38.0f;
++    EXPECT_TRUE(openatc_validate_config(cfg).ok);
++    cfg.pocket_pitch_mm = 38.0f;
++
+     cfg.first_pocket_mpos_mm = nullptr;
+     EXPECT_FALSE(openatc_validate_config(cfg).ok);
+ }
+diff --git a/example_configs/openatc_linear.yaml b/example_configs/openatc_linear.yaml
+index 734ca58..2c1d92f 100644
+--- a/example_configs/openatc_linear.yaml
++++ b/example_configs/openatc_linear.yaml
+@@ -7,6 +7,7 @@ openatc:
+   magazine_axis: x
+   pocket_count: 8
+   first_pocket_mpos_mm: -280.000 -728.000
++  # Positive pitch numbers pockets toward X+/Y+. Negative pitch numbers toward X-/Y-.
+   pocket_pitch_mm: 38.000
+ 
+   safe_z_mpos_mm: -20.000
+-- 
+2.54.0
